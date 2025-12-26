@@ -1,0 +1,8 @@
+marker_dataset/
+checkpoints/
+video/
+wandb/
+predictions/
+.vscode/
+__pycache__/
+*.mp4
