@@ -21,14 +21,15 @@ from model import CenterNetModel
 # CONFIG — EDIT THESE
 # ============================================================
 
-VIDEO_SOURCE = "video/video_with_marker2.mp4"   # path to video file, or 0 for webcam
-WEIGHTS_PATH = "checkpoints/centernet_resnet9_e60.pth"
+# path to video file, or 0 for webcam
+VIDEO_SOURCE = "video/video_with_marker2.mp4"
+WEIGHTS_PATH = "checkpoints/latest_model.pth"
 
-INPUT_SIZE = (640,480)             # model input resolution
+INPUT_SIZE = (640, 360)             # model input resolution
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
-OVERLAY_ALPHA = 0.4          # original frame weight
-OVERLAY_BETA = 0.6          # heatmap weight
+OVERLAY_ALPHA = 0.5          # original frame weight
+OVERLAY_BETA = 0.5          # heatmap weight
 
 SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
@@ -106,6 +107,22 @@ def render_heatmap(
     return cv2.applyColorMap(heat_u8, COLORMAP)
 
 
+def get_heatmap_raw(
+    heat: np.ndarray,
+        out_shape: Tuple[int, int],
+) -> np.ndarray:
+    h, w = out_shape
+    heat = cv2.resize(heat, (w, h))
+    return heat
+
+def draw_keypoints(img_color, keypoints):
+    for kp in keypoints:
+        x, y = int(round(kp.pt[0])), int(round(kp.pt[1]))
+        cv2.circle(img_color, (x, y), radius=3, color=(0, 0, 255), thickness=1)
+    return img_color
+
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
@@ -138,12 +155,25 @@ def main():
     prev_time = time.time()
     last_show = 0.0
 
+    # image features, conventional CV
+    orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
+    
+
     while True:
         x = preprocess_frame(frame, INPUT_SIZE)
         heat_128 = infer_heatmap(model, x, device)
+        # find the point of interest
+        heat_raw = get_heatmap_raw(heat_128, (H, W))
+        # convert into grayscale
+        heat_gray = np.uint8(heat_raw*255.0)
+        heat_clahe = clahe.apply(heat_gray)
+        orb_keypoints = orb_extractor.detect(heat_gray, None)
+        frame_show = draw_keypoints(cv2.cvtColor(heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
+        cv2.imshow("grayscale_heatmap",frame_show)
 
         heat_color = render_heatmap(heat_128, (H, W))
-        overlay = cv2.addWeighted(frame, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
+        overlay = cv2.addWeighted(
+            frame, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
 
         if SHOW_FPS:
             now = time.time()
