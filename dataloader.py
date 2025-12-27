@@ -66,7 +66,7 @@ class CenterNetDataset(Dataset):
         images_dir: str,
         annotations: str,
         fmt: str,
-        input_size: Tuple[int, int] = (640, 480),
+        input_size: Tuple[int, int] = (512, 512),
         output_stride: int = 4,
         augment: bool = True,
     ):
@@ -194,4 +194,4 @@ class CenterNetDataset(Dataset):
         hm_t = torch.from_numpy(hm)
 
         meta = {"path": img_path, "centers": centers}
-        return img_t, hm_t, meta
+        return img_t, hm_t

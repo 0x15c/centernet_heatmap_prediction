@@ -112,7 +112,7 @@ def main():
 
             if global_step % 20 == 0:
                 wandb.log({"train/lr": opt.param_groups[0]["lr"], "step": global_step, "epoch": epoch, **{f"train/{k}": v for k, v in logs.items()}})
-
+                pass
             # log a visualization sometimes
             if global_step % 200 == 0:
                 with torch.no_grad():

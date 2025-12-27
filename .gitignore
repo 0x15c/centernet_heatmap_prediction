@@ -2,6 +2,8 @@ marker_dataset/
 checkpoints/
 video/
 wandb/
+marker_dataset2/
+yolo_dataset/
 predictions/
 .vscode/
 __pycache__/

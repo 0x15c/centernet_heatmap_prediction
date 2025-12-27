@@ -21,14 +21,14 @@ from model import CenterNetModel
 # CONFIG — EDIT THESE
 # ============================================================
 
-VIDEO_SOURCE = "video/1.mp4"   # path to video file, or 0 for webcam
-WEIGHTS_PATH = "checkpoints/centernet_resnet9_e90.pth"
+VIDEO_SOURCE = "video/video_with_marker2.mp4"   # path to video file, or 0 for webcam
+WEIGHTS_PATH = "checkpoints/centernet_resnet9_e60.pth"
 
 INPUT_SIZE = (640,480)             # model input resolution
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
-OVERLAY_ALPHA = 0.6          # original frame weight
-OVERLAY_BETA = 0.4           # heatmap weight
+OVERLAY_ALPHA = 0.4          # original frame weight
+OVERLAY_BETA = 0.6          # heatmap weight
 
 SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
@@ -163,12 +163,12 @@ def main():
             if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
                 # cv2.imshow("Frame", frame)
                 cv2.imshow("Heatmap", heat_color)
-                # cv2.imshow("Overlay", overlay)
+                cv2.imshow("Overlay", overlay)
                 last_show = time.time()
         else:
             # cv2.imshow("Frame", frame)
             cv2.imshow("Heatmap", heat_color)
-            # cv2.imshow("Overlay", overlay)
+            cv2.imshow("Overlay", overlay)
 
         if writer is not None:
             writer.write(overlay)
