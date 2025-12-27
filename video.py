@@ -9,6 +9,7 @@ import os
 import time
 from typing import Tuple
 
+from sklearn.cluster import DBSCAN
 import cv2
 import numpy as np
 import torch
@@ -22,7 +23,7 @@ from model import CenterNetModel
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/video_with_marker2.mp4"
+VIDEO_SOURCE = "video/video_with_marker.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
 
 INPUT_SIZE = (640, 360)             # model input resolution
@@ -65,7 +66,7 @@ def preprocess_frame(
 ) -> torch.Tensor:
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     if input_size is not None:
-        frame_rgb = cv2.resize(frame_rgb, INPUT_SIZE)
+        frame_rgb = cv2.resize(frame_rgb, INPUT_SIZE, cv2.INTER_NEAREST)
 
     x = T.functional.to_tensor(frame_rgb)
     x = T.Normalize(
@@ -98,7 +99,7 @@ def render_heatmap(
     out_shape: Tuple[int, int],
 ) -> np.ndarray:
     h, w = out_shape
-    heat = cv2.resize(heat, (w, h))
+    heat = cv2.resize(heat, (w, h), cv2.INTER_NEAREST)
 
     if HEATMAP_THRESHOLD > 0:
         heat = np.where(heat >= HEATMAP_THRESHOLD, heat, 0.0)
@@ -112,16 +113,67 @@ def get_heatmap_raw(
         out_shape: Tuple[int, int],
 ) -> np.ndarray:
     h, w = out_shape
-    heat = cv2.resize(heat, (w, h))
+    heat = cv2.resize(heat, (w, h), cv2.INTER_NEAREST)
     return heat
+
 
 def draw_keypoints(img_color, keypoints):
     for kp in keypoints:
-        x, y = int(round(kp.pt[0])), int(round(kp.pt[1]))
+        x, y = int(round(kp[0])), int(round(kp[1]))
         cv2.circle(img_color, (x, y), radius=3, color=(0, 0, 255), thickness=1)
     return img_color
 
-clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+
+def dbscan_extractor(dbscan_result, points):
+    labels = dbscan_result.labels_
+    points = np.array(points)
+
+    unique_labels = np.unique(labels)
+    unique_labels = unique_labels[unique_labels != -1]
+
+    if len(unique_labels) == 0:
+        return []
+
+    cluster_info = []
+    for cluster_id in unique_labels:
+        cluster_mask = (labels == cluster_id)
+        cluster_points = points[cluster_mask]
+        cluster_info.append(cluster_points)
+
+    return cluster_info
+
+
+def centroids_calc(cluster_array):
+    result = np.zeros((0, 2))
+    intsty = np.zeros((0)).astype(np.uint16)
+    for cluster in cluster_array:
+        centroid = np.mean(cluster, axis=0)
+        n_pts = cluster.shape[0]
+        intensity = n_pts
+        result = np.append(result, [centroid], axis=0)
+        intsty = np.append(intsty, [intensity], axis=0)
+    return result, intsty
+
+
+def get_pointset(heatmap_uint8: np.ndarray):
+    thres = 50
+    eps = 3
+    min_samples = 2
+    _, activate = cv2.threshold(heatmap_uint8, thres, 255, cv2.THRESH_BINARY)
+    # find those activated points above certain threshlod
+    pts = cv2.findNonZero(activate)
+    if pts is None:
+        centroids = np.zeros((0, 2))
+    else:
+        cluster_coordinates = pts.reshape(-1, 2)
+        cluster_data = DBSCAN(eps=eps, min_samples=min_samples).fit(
+            cluster_coordinates)
+        clusters = dbscan_extractor(cluster_data, cluster_coordinates)
+        centroids, _ = centroids_calc(clusters)
+    return centroids
+
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -149,32 +201,39 @@ def main():
             OUTPUT_VIDEO_PATH,
             cv2.VideoWriter_fourcc(*"mp4v"),
             fps,
-            (W, H),
+            INPUT_SIZE,
         )
 
     prev_time = time.time()
     last_show = 0.0
 
     # image features, conventional CV
-    orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
-    
+    # orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
 
     while True:
-        x = preprocess_frame(frame, INPUT_SIZE)
+        # resize x to INPUT_SIZE tensor
+        x = preprocess_frame(frame, input_size=None)
+        frame_downsampled = cv2.resize(frame, INPUT_SIZE, cv2.INTER_NEAREST)
+        # get inference heatmap
         heat_128 = infer_heatmap(model, x, device)
         # find the point of interest
-        heat_raw = get_heatmap_raw(heat_128, (H, W))
+        heat_raw = get_heatmap_raw(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
         # convert into grayscale
         heat_gray = np.uint8(heat_raw*255.0)
         heat_clahe = clahe.apply(heat_gray)
-        orb_keypoints = orb_extractor.detect(heat_gray, None)
-        frame_show = draw_keypoints(cv2.cvtColor(heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
-        cv2.imshow("grayscale_heatmap",frame_show)
+        # orb_keypoints = orb_extractor.detect(heat_gray, None)
+        # frame_show = draw_keypoints(cv2.cvtColor(
+        #     heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
+        # cv2.imshow("grayscale_heatmap", frame_show)
+        # model outputs the resized tensor compared to input, thus the output should be resized
+        
+        # get cluster centroids
+        c = get_pointset(heat_gray)
 
-        heat_color = render_heatmap(heat_128, (H, W))
+        heat_color = render_heatmap(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
         overlay = cv2.addWeighted(
-            frame, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
-
+            frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
+        overlay = draw_keypoints(overlay, c)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
