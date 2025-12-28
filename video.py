@@ -16,6 +16,7 @@ import torch
 import torchvision.transforms as T
 
 from model import CenterNetModel
+# from cpd_net.cpd_model import PointRegressor
 from cpd_net.pred import displacement_predictor
 
 # ============================================================
@@ -23,8 +24,9 @@ from cpd_net.pred import displacement_predictor
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/video_with_marker.mp4"
+VIDEO_SOURCE = "video/video_with_marker2.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
+CPD_WEIGHTS_PATH = 'cpd_net/cpd_net_weights_0.01.pt'
 
 INPUT_SIZE = (640, 360)             # model input resolution
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
@@ -172,13 +174,86 @@ def get_pointset(heatmap_uint8: np.ndarray):
         centroids, _ = centroids_calc(clusters)
     return centroids
 
-clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+def truncate_point_sets(source_points, target_points):
+    """
+    Truncate source/target point sets to the same length.
+
+    Args:
+        source_points: np.ndarray of shape (Ns, 2) or (B, Ns, 2)
+        target_points: np.ndarray of shape (Nt, 2) or (B, Nt, 2)
+
+    Returns:
+        (source_truncated, target_truncated) with matching N = min(Ns, Nt)
+    """
+    source_points = np.asarray(source_points)
+    target_points = np.asarray(target_points)
+
+    # Handle unbatched input.
+    if source_points.ndim == 2 and target_points.ndim == 2:
+        n = min(source_points.shape[0], target_points.shape[0])
+        return source_points[:n], target_points[:n]
+
+    # Handle batched input.
+    if source_points.ndim == 3 and target_points.ndim == 3:
+        n = min(source_points.shape[1], target_points.shape[1])
+        return source_points[:, :n, :], target_points[:, :n, :]
+
+    raise ValueError(
+        "source_points and target_points must be both (N,2) or both (B,N,2).")
+
+
+def draw_displacement_vectors(
+    image: np.ndarray,
+    base_points: np.ndarray,
+    displacement: np.ndarray,
+    color: tuple[int, int, int] = (0, 255, 0),
+    thickness: int = 1,
+    tip_length: float = 0.2,
+    copy: bool = True,
+) -> np.ndarray:
+    """
+    Overlay displacement vectors on an image.
+
+    Args:
+        image: HxWx3 (BGR) image as numpy array.
+        base_points: (N, 2) array of base points (x, y) in pixel coords.
+        displacement: (N, 2) array of displacement vectors (dx, dy) in pixels.
+        color: Arrow color in BGR.
+        thickness: Line thickness for arrows.
+        tip_length: Arrow tip length (OpenCV parameter, 0-1).
+        copy: If True, draw on a copy of the image.
+
+    Returns:
+        Image with vector overlays.
+    """
+    if copy:
+        img = image.copy()
+    else:
+        img = image
+
+    base_points = np.asarray(base_points, dtype=np.float32)
+    displacement = np.asarray(displacement, dtype=np.float32)
+
+    if base_points.shape != displacement.shape or base_points.shape[1] != 2:
+        raise ValueError("base_points and displacement must be shape (N, 2).")
+
+    for (x, y), (dx, dy) in zip(base_points, displacement):
+        start = (int(round(x)), int(round(y)))
+        end = (int(round(x + dx)), int(round(y + dy)))
+        cv2.arrowedLine(img, start, end, color,
+                        thickness, tipLength=tip_length)
+
+    return img
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
+    # load cpd_net weights for displacement field prediction
+    cpd_net_predictor = displacement_predictor(CPD_WEIGHTS_PATH, device)
+    # load centernet weights
     model = build_model_from_weights(WEIGHTS_PATH, device)
 
     cap = cv2.VideoCapture(0 if VIDEO_SOURCE == 0 else VIDEO_SOURCE)
@@ -209,7 +284,7 @@ def main():
 
     # image features, conventional CV
     # orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
-
+    frame_count = 0
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
         x = preprocess_frame(frame, input_size=INPUT_SIZE)
@@ -226,14 +301,21 @@ def main():
         #     heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
         # cv2.imshow("grayscale_heatmap", frame_show)
         # model outputs the resized tensor compared to input, thus the output should be resized
-        
+
         # get cluster centroids
         c = get_pointset(heat_gray)
-
+        if frame_count <= 1:
+            c0 = c
+            d = None
+        else:
+            c0n, cn = truncate_point_sets(c0, c)
+            d = cpd_net_predictor.predict(c0n/200, cn/200)
         heat_color = render_heatmap(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
         overlay = cv2.addWeighted(
             frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
         overlay = draw_keypoints(overlay, c)
+        if d is not None:
+            overlay = draw_displacement_vectors(overlay, cn, d*200)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
@@ -269,7 +351,7 @@ def main():
         ret, frame = cap.read()
         if not ret:
             break
-
+        frame_count += 1
     cap.release()
     if writer:
         writer.release()

@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from model import PointRegressor
+from .cpd_model import PointRegressor
 
 class displacement_predictor:
     def __init__(self, weight_path: str, device: torch.device | None = None):
@@ -29,7 +29,7 @@ class displacement_predictor:
         return tensor.to(self.device)
 
     def predict(self, source_points: np.ndarray | torch.Tensor,
-                target_points: np.ndarray | torch.Tensor) -> torch.Tensor:
+                target_points: np.ndarray | torch.Tensor) -> np.ndarray:
         # Convert inputs to tensors on the correct device.
         source_tensor = self._to_tensor(source_points)
         target_tensor = self._to_tensor(target_points)
@@ -38,5 +38,6 @@ class displacement_predictor:
         with torch.no_grad():
             displacement = self.regressionModel(source_tensor, target_tensor)
 
-        # Return displacement on CPU for easy downstream use.
-        return displacement.cpu()
+        # Remove batch dimension and return as numpy.
+        displacement_np = displacement.squeeze(0).cpu().numpy()
+        return displacement_np
