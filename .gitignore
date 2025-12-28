@@ -8,3 +8,4 @@ predictions/
 .vscode/
 __pycache__/
 *.mp4
+*.pt

@@ -16,7 +16,7 @@ import torch
 import torchvision.transforms as T
 
 from model import CenterNetModel
-
+from cpd_net.pred import displacement_predictor
 
 # ============================================================
 # CONFIG — EDIT THESE
@@ -211,8 +211,8 @@ def main():
     # orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
 
     while True:
-        # resize x to INPUT_SIZE tensor
-        x = preprocess_frame(frame, input_size=None)
+        # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
+        x = preprocess_frame(frame, input_size=INPUT_SIZE)
         frame_downsampled = cv2.resize(frame, INPUT_SIZE, cv2.INTER_NEAREST)
         # get inference heatmap
         heat_128 = infer_heatmap(model, x, device)
@@ -220,7 +220,7 @@ def main():
         heat_raw = get_heatmap_raw(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
         # convert into grayscale
         heat_gray = np.uint8(heat_raw*255.0)
-        heat_clahe = clahe.apply(heat_gray)
+        # heat_clahe = clahe.apply(heat_gray)
         # orb_keypoints = orb_extractor.detect(heat_gray, None)
         # frame_show = draw_keypoints(cv2.cvtColor(
         #     heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
