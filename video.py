@@ -17,7 +17,8 @@ import torchvision.transforms as T
 
 from model import CenterNetModel
 # from cpd_net.cpd_model import PointRegressor
-from cpd_net.pred import displacement_predictor
+# from cpd_net.pred import displacement_predictor
+from voxelmorph.model import VoxelMorph2D
 
 # ============================================================
 # CONFIG — EDIT THESE
@@ -26,7 +27,8 @@ from cpd_net.pred import displacement_predictor
 # path to video file, or 0 for webcam
 VIDEO_SOURCE = "video/video_with_marker2.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
-CPD_WEIGHTS_PATH = 'cpd_net/cpd_net_weights_0.01.pt'
+WEIGHTS_PATH_VOXELMORPH = "voxelmorph/voxelmorph2d_images_25.pt"
+# CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (640, 360)             # model input resolution
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
@@ -45,7 +47,7 @@ COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 # ============================================================
 
 
-def build_model_from_weights(weights_path: str, device: torch.device) -> CenterNetModel:
+def get_centernet_model(weights_path: str, device: torch.device) -> CenterNetModel:
     state = torch.load(weights_path, map_location=device)
 
     if "head.2.bias" in state:
@@ -60,6 +62,15 @@ def build_model_from_weights(weights_path: str, device: torch.device) -> CenterN
     model.to(device)
     model.eval()
     return model
+
+def get_voxelmorph_model(weights_path: str, device: torch.device) -> VoxelMorph2D:
+    state = torch.load(weights_path, map_location=device)
+    model = VoxelMorph2D()
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+    return model
+
 
 
 def preprocess_frame(
@@ -80,11 +91,11 @@ def preprocess_frame(
 
 
 @torch.no_grad()
-def infer_heatmap(
+def centernet_infer(
     model: CenterNetModel,
     x: torch.Tensor,
     device: torch.device,
-) -> np.ndarray:
+) -> torch.Tensor:
     logits = model(x.to(device))
     prob = torch.sigmoid(logits)[0]  # CxHxW
 
@@ -93,15 +104,28 @@ def infer_heatmap(
     else:
         heat = prob[0]
 
-    return heat.cpu().numpy()
+    return heat
+
+@torch.no_grad()
+def voxelmorph_infer(
+    model: VoxelMorph2D,
+    moving: torch.tensor,
+    fixed: torch.tensor,
+    # device: torch.device,
+)-> np.ndarray:
+    wraped, flow = model(moving, fixed)
+    wraped_np = wraped.squeeze().cpu().numpy()
+    cv2.imshow("wraped",np.uint8(wraped_np*255))
+    return flow.squeeze().cpu().numpy()
 
 
 def render_heatmap(
     heat: np.ndarray,
     out_shape: Tuple[int, int],
 ) -> np.ndarray:
-    h, w = out_shape
-    heat = cv2.resize(heat, (w, h), cv2.INTER_NEAREST)
+    if out_shape != (None, None):
+        h, w = out_shape
+        heat = cv2.resize(heat, (w, h), cv2.INTER_NEAREST)
 
     if HEATMAP_THRESHOLD > 0:
         heat = np.where(heat >= HEATMAP_THRESHOLD, heat, 0.0)
@@ -119,10 +143,10 @@ def get_heatmap_raw(
     return heat
 
 
-def draw_keypoints(img_color, keypoints):
+def draw_keypoints(img_color, keypoints, color=(0, 0, 255)):
     for kp in keypoints:
         x, y = int(round(kp[0])), int(round(kp[1]))
-        cv2.circle(img_color, (x, y), radius=3, color=(0, 0, 255), thickness=1)
+        cv2.circle(img_color, (x, y), radius=3, color=color, thickness=1)
     return img_color
 
 
@@ -174,35 +198,6 @@ def get_pointset(heatmap_uint8: np.ndarray):
         centroids, _ = centroids_calc(clusters)
     return centroids
 
-
-def truncate_point_sets(source_points, target_points):
-    """
-    Truncate source/target point sets to the same length.
-
-    Args:
-        source_points: np.ndarray of shape (Ns, 2) or (B, Ns, 2)
-        target_points: np.ndarray of shape (Nt, 2) or (B, Nt, 2)
-
-    Returns:
-        (source_truncated, target_truncated) with matching N = min(Ns, Nt)
-    """
-    source_points = np.asarray(source_points)
-    target_points = np.asarray(target_points)
-
-    # Handle unbatched input.
-    if source_points.ndim == 2 and target_points.ndim == 2:
-        n = min(source_points.shape[0], target_points.shape[0])
-        return source_points[:n], target_points[:n]
-
-    # Handle batched input.
-    if source_points.ndim == 3 and target_points.ndim == 3:
-        n = min(source_points.shape[1], target_points.shape[1])
-        return source_points[:, :n, :], target_points[:, :n, :]
-
-    raise ValueError(
-        "source_points and target_points must be both (N,2) or both (B,N,2).")
-
-
 def draw_displacement_vectors(
     image: np.ndarray,
     base_points: np.ndarray,
@@ -246,15 +241,44 @@ def draw_displacement_vectors(
 
     return img
 
+def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 3) -> np.ndarray:
+    # flow: (2, H, W), c: (N, 2) in (x, y)
+    h, w = flow.shape[1], flow.shape[2]
+    pts = np.asarray(c, dtype=np.float32)
+
+    xs = np.clip(np.round(pts[:, 0]).astype(np.int64), 0, w - 1)
+    ys = np.clip(np.round(pts[:, 1]).astype(np.int64), 0, h - 1)
+
+    if radius <= 0:
+        u = flow[0, ys, xs]
+        v = flow[1, ys, xs]
+    else:
+        ksize = 2 * radius + 1
+        u_blur = cv2.blur(flow[0], (ksize, ksize), borderType=cv2.BORDER_REFLECT)
+        v_blur = cv2.blur(flow[1], (ksize, ksize), borderType=cv2.BORDER_REFLECT)
+        u = u_blur[ys, xs]
+        v = v_blur[ys, xs]
+
+    return np.stack([u, v], axis=1)
+
+def sample_regular_grid(height: int, width: int, step: int) -> np.ndarray:
+    ys = np.arange(0, height, step, dtype=np.int32)
+    xs = np.arange(0, width, step, dtype=np.int32)
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    base_points = np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)
+    return base_points, grid_x, grid_y
+
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
     # load cpd_net weights for displacement field prediction
-    cpd_net_predictor = displacement_predictor(CPD_WEIGHTS_PATH, device)
+    # cpd_net_predictor = displacement_predictor(CPD_WEIGHTS_PATH, device)
     # load centernet weights
-    model = build_model_from_weights(WEIGHTS_PATH, device)
+    centernet_model = get_centernet_model(WEIGHTS_PATH, device)
+    voxelmorph_model = get_voxelmorph_model(WEIGHTS_PATH_VOXELMORPH, device)
 
     cap = cv2.VideoCapture(0 if VIDEO_SOURCE == 0 else VIDEO_SOURCE)
     if not cap.isOpened():
@@ -285,14 +309,21 @@ def main():
     # image features, conventional CV
     # orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
     frame_count = 0
+    # grid sampling flow
+    height, width = INPUT_SIZE[1], INPUT_SIZE[0]
+    step = max(1, min(height, width) // 12)
+    base_points, grid_x, grid_y = sample_regular_grid(height, width, step)
+
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
-        x = preprocess_frame(frame, input_size=INPUT_SIZE)
+        x = preprocess_frame(frame, input_size=INPUT_SIZE) # INPUT_SIZE
         frame_downsampled = cv2.resize(frame, INPUT_SIZE, cv2.INTER_NEAREST)
-        # get inference heatmap
-        heat_128 = infer_heatmap(model, x, device)
+        # get inference probability map
+        # please be noted that the outputed probability map will be downsampled by 4x
+        # that's why we have resize everywhere
+        probmap_inferred = centernet_infer(centernet_model, x, device)
         # find the point of interest
-        heat_raw = get_heatmap_raw(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
+        heat_raw = get_heatmap_raw(probmap_inferred.cpu().numpy(), (INPUT_SIZE[1], INPUT_SIZE[0]))
         # convert into grayscale
         heat_gray = np.uint8(heat_raw*255.0)
         # heat_clahe = clahe.apply(heat_gray)
@@ -304,18 +335,30 @@ def main():
 
         # get cluster centroids
         c = get_pointset(heat_gray)
-        if frame_count <= 1:
+        if frame_count <= 0:
             c0 = c
             d = None
-        else:
-            c0n, cn = truncate_point_sets(c0, c)
-            d = cpd_net_predictor.predict(c0n/200, cn/200)
-        heat_color = render_heatmap(heat_128, (INPUT_SIZE[1], INPUT_SIZE[0]))
+            frame0_tensor = probmap_inferred
+        # if frame_count % 10 == 0:
+        #     cv2.imwrite(f"screen_shots/{frame_count//10}.png",cv2.cvtColor(heat_gray,cv2.COLOR_GRAY2BGR))
+        flow = voxelmorph_infer(voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None])
+        # after we obtain the flow, let's do some upsampling to match the dimension:
+        h, w = flow.shape[1], flow.shape[2]
+        scale_x = INPUT_SIZE[0] / w
+        scale_y = INPUT_SIZE[1] / h
+
+        u = cv2.resize(flow[0], (INPUT_SIZE[0], INPUT_SIZE[1]), interpolation=cv2.INTER_LINEAR) * scale_x
+        v = cv2.resize(flow[1], (INPUT_SIZE[0], INPUT_SIZE[1]), interpolation=cv2.INTER_LINEAR) * scale_y
+        flow_upsampled = np.stack([u, v], axis=0)
+        d = sample_flow_at_points(flow_upsampled, c0, radius=2)
+        
+        heat_color = render_heatmap(probmap_inferred.cpu().numpy(), (INPUT_SIZE[1], INPUT_SIZE[0]))
         overlay = cv2.addWeighted(
             frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
         overlay = draw_keypoints(overlay, c)
+        overlay = draw_keypoints(overlay, c0, color=(0, 255, 0))
         if d is not None:
-            overlay = draw_displacement_vectors(overlay, cn, d*200)
+            overlay = draw_displacement_vectors(overlay, c0, d*5)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
