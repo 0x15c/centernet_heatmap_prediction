@@ -5,7 +5,7 @@ We are trying to predict a heatmap of pseudo-probability distribution of markers
 
 We use ResNet-9 as the backbone for feature extraction; it's a lightweight alternative, producing only ~11.5 MB model. We believe inference can be accelerated using light models while feature extraction ability is preserved, due to our rather simple sensor output (we are not expecting the model to recognise complex features, such as an animal). Here is a [link](https://github.com/Moddy2024/ResNet-9.git) to the ResNet-9 implementation.
 
-Below is an image of mixed raw sensor output and predicted marker distribution.
+Below is an image of mixed raw sensor output and predicted marker distribution. We tested our code using video data acquired from our [D-Sight](https://github.com/0x15c/D-Sight) sensor, an extra-low-cost alternative to GelSight dedicated to robotics applications.
 
 CenterNet probability distribution over input image             |  Extracted keypoints
 :-------------------------:|:-------------------------:
