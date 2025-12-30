@@ -16,9 +16,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 
-from model import CenterNetModel
-# from cpd_net.cpd_model import PointRegressor
-from cpd_net.pred import displacement_predictor
+from centernet.centernet_model import CenterNetModel
 
 # ============================================================
 # CONFIG — EDIT THESE

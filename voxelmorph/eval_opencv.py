@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from model import VoxelMorph2D
+from centernet.centernet_model import VoxelMorph2D
 
 MOVING_PATH = "screen_shots/65.png"
 FIXED_PATH = "screen_shots/0.png"
