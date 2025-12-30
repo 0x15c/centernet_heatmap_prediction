@@ -6,9 +6,9 @@ import torch
 from torch.utils.data import DataLoader
 import wandb
 
-from model import CenterNetModel
-from dataloader import CenterNetDataset
-from losses import combined_heatmap_loss
+from centernet_model import CenterNetModel
+from centernet_dataloader import CenterNetDataset
+from centernet_losses import combined_heatmap_loss
 
 
 def unpack_batch(batch):

@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 import torchvision.transforms as T
 
-from model import CenterNetModel
+from centernet_model import CenterNetModel
 
 
 def main():
