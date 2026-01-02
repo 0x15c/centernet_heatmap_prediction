@@ -113,11 +113,11 @@ def voxelmorph_infer(
     moving: torch.tensor,
     fixed: torch.tensor,
     # device: torch.device,
-) -> np.ndarray:
-    wraped, flow = model(moving, fixed)
-    wraped_np = wraped.squeeze().cpu().numpy()
-    cv2.imshow("wraped", np.uint8(wraped_np*255))
-    return flow.squeeze().cpu().numpy()
+) -> torch.tensor:
+    _, flow = model(moving, fixed)
+    # wraped_np = wraped.squeeze().cpu().numpy()
+    # cv2.imshow("wraped", np.uint8(wraped_np*255))
+    return flow
 
 
 def render_heatmap(
@@ -322,6 +322,7 @@ def main():
     # this is something like a buffer
     # this is because the centernet infer model returns a tensor 1/4 of its original size.
     probmap_inferred_cpu_tensor = torch.empty((height//4, width//4), pin_memory=True)
+    flow_cpu_tensor = torch.empty((2,height//4, width//4), pin_memory=True) # [2, H, W] Tensor
 
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
@@ -354,8 +355,11 @@ def main():
             frame0_tensor = probmap_inferred
         # if frame_count % 10 == 0:
         #     cv2.imwrite(f"screen_shots/{frame_count//10}.png",cv2.cvtColor(heat_gray,cv2.COLOR_GRAY2BGR))
-        flow = voxelmorph_infer(
-            voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None])
+        # [flow] is a tensor
+        flow_gpu_tensor = voxelmorph_infer(
+            voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
+        flow_cpu_tensor.copy_(flow_gpu_tensor, non_blocking=True)
+        flow = flow_cpu_tensor.numpy()
         # after we obtain the flow, let's do some upsampling to match the dimension:
         h, w = flow.shape[1], flow.shape[2]
         scale_x = INPUT_SIZE[0] / w
