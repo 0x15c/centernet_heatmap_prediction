@@ -30,7 +30,7 @@ WEIGHTS_PATH = "checkpoints/latest_model.pth"
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/voxelmorph2d_images_25.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
-INPUT_SIZE = (640, 360)             # model input resolution
+INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
 OVERLAY_ALPHA = 0.5          # original frame weight
@@ -63,6 +63,7 @@ def get_centernet_model(weights_path: str, device: torch.device) -> CenterNetMod
     model.eval()
     return model
 
+
 def get_voxelmorph_model(weights_path: str, device: torch.device) -> VoxelMorph2D:
     state = torch.load(weights_path, map_location=device)
     model = VoxelMorph2D()
@@ -70,7 +71,6 @@ def get_voxelmorph_model(weights_path: str, device: torch.device) -> VoxelMorph2
     model.to(device)
     model.eval()
     return model
-
 
 
 def preprocess_frame(
@@ -106,16 +106,17 @@ def centernet_infer(
 
     return heat
 
+
 @torch.no_grad()
 def voxelmorph_infer(
     model: VoxelMorph2D,
     moving: torch.tensor,
     fixed: torch.tensor,
     # device: torch.device,
-)-> np.ndarray:
+) -> np.ndarray:
     wraped, flow = model(moving, fixed)
     wraped_np = wraped.squeeze().cpu().numpy()
-    cv2.imshow("wraped",np.uint8(wraped_np*255))
+    cv2.imshow("wraped", np.uint8(wraped_np*255))
     return flow.squeeze().cpu().numpy()
 
 
@@ -198,6 +199,7 @@ def get_pointset(heatmap_uint8: np.ndarray):
         centroids, _ = centroids_calc(clusters)
     return centroids
 
+
 def draw_displacement_vectors(
     image: np.ndarray,
     base_points: np.ndarray,
@@ -241,6 +243,7 @@ def draw_displacement_vectors(
 
     return img
 
+
 def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 3) -> np.ndarray:
     # flow: (2, H, W), c: (N, 2) in (x, y)
     h, w = flow.shape[1], flow.shape[2]
@@ -254,12 +257,15 @@ def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 3) -> n
         v = flow[1, ys, xs]
     else:
         ksize = 2 * radius + 1
-        u_blur = cv2.blur(flow[0], (ksize, ksize), borderType=cv2.BORDER_REFLECT)
-        v_blur = cv2.blur(flow[1], (ksize, ksize), borderType=cv2.BORDER_REFLECT)
+        u_blur = cv2.blur(flow[0], (ksize, ksize),
+                          borderType=cv2.BORDER_REFLECT)
+        v_blur = cv2.blur(flow[1], (ksize, ksize),
+                          borderType=cv2.BORDER_REFLECT)
         u = u_blur[ys, xs]
         v = v_blur[ys, xs]
 
     return np.stack([u, v], axis=1)
+
 
 def sample_regular_grid(height: int, width: int, step: int) -> np.ndarray:
     ys = np.arange(0, height, step, dtype=np.int32)
@@ -267,7 +273,6 @@ def sample_regular_grid(height: int, width: int, step: int) -> np.ndarray:
     grid_x, grid_y = np.meshgrid(xs, ys)
     base_points = np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)
     return base_points, grid_x, grid_y
-
 
 
 def main():
@@ -284,7 +289,7 @@ def main():
     if not cap.isOpened():
         raise RuntimeError(f"Failed to open video source: {VIDEO_SOURCE}")
 
-    ret, frame = cap.read()
+    ret, frame = cap.read()  # frame: (H, W, C)
     if not ret:
         raise RuntimeError("Failed to read video")
 
@@ -311,19 +316,27 @@ def main():
     frame_count = 0
     # grid sampling flow
     height, width = INPUT_SIZE[1], INPUT_SIZE[0]
-    step = max(1, min(height, width) // 12)
-    base_points, grid_x, grid_y = sample_regular_grid(height, width, step)
+    # step = max(1, min(height, width) // 12)
+    # base_points, grid_x, grid_y = sample_regular_grid(height, width, step)
+
+    # this is something like a buffer
+    # this is because the centernet infer model returns a tensor 1/4 of its original size.
+    probmap_inferred_cpu_tensor = torch.empty((height//4, width//4), pin_memory=True)
 
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
-        x = preprocess_frame(frame, input_size=INPUT_SIZE) # INPUT_SIZE
-        frame_downsampled = cv2.resize(frame, INPUT_SIZE, cv2.INTER_NEAREST)
+        x = preprocess_frame(frame, input_size=(
+            height, width))  # x: (N, C, H, W)
+        frame_downsampled = cv2.resize(
+            frame, (width, height), cv2.INTER_NEAREST)
         # get inference probability map
         # please be noted that the outputed probability map will be downsampled by 4x
         # that's why we have resize everywhere
         probmap_inferred = centernet_infer(centernet_model, x, device)
+        probmap_inferred_cpu_tensor.copy_(probmap_inferred, non_blocking=True)
+        probmap_inferred_cpu = probmap_inferred_cpu_tensor.numpy()
         # find the point of interest
-        heat_raw = get_heatmap_raw(probmap_inferred.cpu().numpy(), (INPUT_SIZE[1], INPUT_SIZE[0]))
+        heat_raw = get_heatmap_raw(probmap_inferred_cpu, (height, width))
         # convert into grayscale
         heat_gray = np.uint8(heat_raw*255.0)
         # heat_clahe = clahe.apply(heat_gray)
@@ -341,18 +354,21 @@ def main():
             frame0_tensor = probmap_inferred
         # if frame_count % 10 == 0:
         #     cv2.imwrite(f"screen_shots/{frame_count//10}.png",cv2.cvtColor(heat_gray,cv2.COLOR_GRAY2BGR))
-        flow = voxelmorph_infer(voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None])
+        flow = voxelmorph_infer(
+            voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None])
         # after we obtain the flow, let's do some upsampling to match the dimension:
         h, w = flow.shape[1], flow.shape[2]
         scale_x = INPUT_SIZE[0] / w
         scale_y = INPUT_SIZE[1] / h
 
-        u = cv2.resize(flow[0], (INPUT_SIZE[0], INPUT_SIZE[1]), interpolation=cv2.INTER_LINEAR) * scale_x
-        v = cv2.resize(flow[1], (INPUT_SIZE[0], INPUT_SIZE[1]), interpolation=cv2.INTER_LINEAR) * scale_y
+        u = cv2.resize(flow[0], (width, height),
+                       interpolation=cv2.INTER_LINEAR) * scale_x
+        v = cv2.resize(flow[1], (width, height),
+                       interpolation=cv2.INTER_LINEAR) * scale_y
         flow_upsampled = np.stack([u, v], axis=0)
         d = sample_flow_at_points(flow_upsampled, c0, radius=2)
-        
-        heat_color = render_heatmap(probmap_inferred.cpu().numpy(), (INPUT_SIZE[1], INPUT_SIZE[0]))
+
+        heat_color = render_heatmap(probmap_inferred_cpu, (height, width))
         overlay = cv2.addWeighted(
             frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
         overlay = draw_keypoints(overlay, c)
