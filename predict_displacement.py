@@ -25,9 +25,9 @@ from voxelmorph.model import VoxelMorph2D
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/video_with_marker.mp4"
+VIDEO_SOURCE = "video/video_with_marker2.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
-WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_10.pt"
+WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
