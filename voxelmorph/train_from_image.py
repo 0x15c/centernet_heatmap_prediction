@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import torch
 
-from loss import total_loss
+from loss import *
 from model import VoxelMorph2D
 
 try:
@@ -16,20 +16,20 @@ except ImportError as exc:
     ) from exc
 
 
-IMAGE_DIR = "screen_shots"
-FIXED_IMAGE_NAME = None  # e.g. "fixed.png" or None for random fixed images
+IMAGE_DIR = "../screen_shots"
+FIXED_IMAGE_NAME = "frame_0.jpg"  # e.g. "fixed.png" or None for random fixed images
 RESIZE_TO = None  # (width, height) or None to keep original size
-checkpoint_path = "ckpt"
+checkpoint_path = "./ckpt"
 
 batch_size = 32
-epochs = 50
+epochs = 15
 learning_rate = 1e-3
 smoothness_weight = 0.1
 seed = 13
 drop_last = True
 
 WANDB_PROJECT = "voxelmorph"
-WANDB_RUN_NAME = "train_from_image"
+WANDB_RUN_NAME = "train_from_image_MSE_LOSS_FIX"
 
 
 def load_gray(path, resize_to=None):
@@ -141,7 +141,10 @@ def main():
             fixed = fixed.to(device)
 
             warped, flow = model(moving, fixed)
-            loss = total_loss(fixed, warped, flow, smoothness_weight=smoothness_weight)
+            # loss = total_loss(fixed, warped, flow, smoothness_weight=smoothness_weight, sim_measure="MSE")
+            sim_loss = similarity_loss(fixed, warped, loss_type="MSE")
+            smooth_loss = smoothness_loss(flow)
+            loss = sim_loss + smooth_loss*smoothness_weight
 
             optimizer.zero_grad()
             loss.backward()
@@ -149,7 +152,7 @@ def main():
 
             epoch_loss += loss.item()
             num_batches += 1
-            wandb.log({"train/loss": loss.item(), "epoch": epoch}, step=global_step)
+            wandb.log({"train/loss": loss.item(),"train/sim_loss":sim_loss,"train/smooth_loss":smooth_loss , "epoch": epoch}, step=global_step)
             global_step += 1
 
         avg_loss = epoch_loss / max(1, num_batches)

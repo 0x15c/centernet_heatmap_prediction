@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from centernet.centernet_model import VoxelMorph2D
+from centernet.centernet_model import CenterNetModel
 
-MOVING_PATH = "screen_shots/65.png"
-FIXED_PATH = "screen_shots/0.png"
+MOVING_PATH = "../screen_shots/65.png"
+FIXED_PATH = "../screen_shots/0.png"
 CHECKPOINT_PATH = "voxelmorph2d_mnist.pt"
 OUT_PATH = "warped.png"
 FLOW_PATH = "flow.npy"
@@ -93,7 +93,7 @@ def main():
         device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
 
-    model = VoxelMorph2D()
+    model = CenterNetModel()
     state = torch.load(CHECKPOINT_PATH, map_location=device)
     model.load_state_dict(state)
     model.to(device)

@@ -25,9 +25,9 @@ from voxelmorph.model import VoxelMorph2D
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/video_with_marker2.mp4"
+VIDEO_SOURCE = "video/video_with_marker.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
-WEIGHTS_PATH_VOXELMORPH = "voxelmorph/voxelmorph2d_images_25.pt"
+WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_10.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
@@ -378,7 +378,7 @@ def main():
         overlay = draw_keypoints(overlay, c)
         overlay = draw_keypoints(overlay, c0, color=(0, 255, 0))
         if d is not None:
-            overlay = draw_displacement_vectors(overlay, c0, d*5)
+            overlay = draw_displacement_vectors(overlay, c0, d*10)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
