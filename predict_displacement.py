@@ -378,7 +378,7 @@ def main():
         overlay = draw_keypoints(overlay, c)
         overlay = draw_keypoints(overlay, c0, color=(0, 255, 0))
         if d is not None:
-            overlay = draw_displacement_vectors(overlay, c0, d*10)
+            overlay = draw_displacement_vectors(overlay, c0, d*4)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
@@ -397,12 +397,12 @@ def main():
             if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
                 # cv2.imshow("Frame", frame)
                 cv2.imshow("Heatmap", heat_color)
-                cv2.imshow("Overlay", overlay)
+                cv2.imshow("Displacement Field", overlay)
                 last_show = time.time()
         else:
             # cv2.imshow("Frame", frame)
             cv2.imshow("Heatmap", heat_color)
-            cv2.imshow("Overlay", overlay)
+            cv2.imshow("Displacement Field", overlay)
 
         if writer is not None:
             writer.write(overlay)

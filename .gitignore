@@ -8,5 +8,6 @@ yolo_dataset/
 predictions/
 .vscode/
 __pycache__/
+visualisation/
 *.mp4
 *.pt

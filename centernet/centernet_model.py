@@ -86,3 +86,7 @@ class CenterNetModel(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feat = self.backbone(x)
         return self.head(feat) # logits
+
+def build_model():
+    num_classes = 1   # ← change if your model was trained with >1 heatmap
+    return CenterNetModel(num_classes=num_classes)
