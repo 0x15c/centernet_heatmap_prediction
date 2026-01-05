@@ -87,6 +87,6 @@ class CenterNetModel(nn.Module):
         feat = self.backbone(x)
         return self.head(feat) # logits
 
-def build_model():
-    num_classes = 1   # ← change if your model was trained with >1 heatmap
-    return CenterNetModel(num_classes=num_classes)
+# def build_model():
+#     num_classes = 1   # ← change if your model was trained with >1 heatmap
+#     return CenterNetModel(num_classes=num_classes)

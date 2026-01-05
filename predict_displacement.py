@@ -27,7 +27,7 @@ from voxelmorph.model import VoxelMorph2D
 # path to video file, or 0 for webcam
 VIDEO_SOURCE = "video/video_with_marker2.mp4"
 WEIGHTS_PATH = "checkpoints/latest_model.pth"
-WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15.pt"
+WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_all_directional.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
@@ -385,7 +385,7 @@ def main():
             prev_time = now
             cv2.putText(
                 overlay,
-                f"FPS: {fps:.1f}",
+                f"Frame_Count: {frame_count}",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1.0,
@@ -397,10 +397,12 @@ def main():
             if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
                 # cv2.imshow("Frame", frame)
                 cv2.imshow("Heatmap", heat_color)
+                cv2.imshow("Original", cv2.resize(frame,INPUT_SIZE))
                 cv2.imshow("Displacement Field", overlay)
                 last_show = time.time()
         else:
             # cv2.imshow("Frame", frame)
+            cv2.imshow("Original", cv2.resize(frame,INPUT_SIZE))
             cv2.imshow("Heatmap", heat_color)
             cv2.imshow("Displacement Field", overlay)
 

@@ -73,12 +73,17 @@ def similarity_loss(fixed, warped, loss_type=["MSE", "NCC"]):
 
 
 def smoothness_loss(flow):  # flow: [N, 2, H, W]
-    # dx = torch.mean((flow[:, :, :, 1:] - flow[:, :, :, :-1]) ** 2)
-    # dy = torch.mean((flow[:, :, 1:, :] - flow[:, :, :-1, :]) ** 2)
-    # h_w_ratio = flow.size()[2]/flow.size()[3]
-    dx = torch.mean((flow[:, 0, :, 1:] - flow[:, 0, :, :-1]) ** 2) # *h_w_ratio
-    dy = torch.mean((flow[:, 1, 1:, :] - flow[:, 1, :-1, :]) ** 2)
-    return (dx + dy)/2
+    # punish on smoothness, by the gradient norm.
+    # let the displacement field be f = (u,v) where f: R^2 -> R^2
+    # our goal is to obtain ||∇f||^2, 2-norm. ∇f is a 2 by 2 matrix,
+    # we can calculate its squared norm by adding squared norm of column vectors of it
+    # we first calculate the column vector of ∇f, which is (∂u/∂x, ∂u/∂y) and (∂v/∂x, ∂v/∂y)
+    # then square them and add together
+    ux2_plus_vx2 = torch.mean(
+        (flow[:, :, :, 1:] - flow[:, :, :, :-1]) ** 2)  # [N, 2, H, W-1]
+    uy2_plus_vy2 = torch.mean(
+        (flow[:, :, 1:, :] - flow[:, :, :-1, :]) ** 2)  # [N, 2, H-1, W]
+    return (ux2_plus_vx2 + uy2_plus_vy2)
 
 
 def total_loss(fixed, warped, flow, smoothness_weight=0.1, sim_measure="MSE"):

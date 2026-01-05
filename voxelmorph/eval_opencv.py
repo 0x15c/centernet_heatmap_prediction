@@ -1,15 +1,17 @@
 import time
-
+import sys
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from model import VoxelMorph2D
 
-from centernet.centernet_model import CenterNetModel
+sys.path.append("../")
 
-MOVING_PATH = "../screen_shots/65.png"
-FIXED_PATH = "../screen_shots/0.png"
-CHECKPOINT_PATH = "voxelmorph2d_mnist.pt"
+
+MOVING_PATH = "../screen_shots/frame_650.jpg"
+FIXED_PATH = "../screen_shots/frame_0.jpg"
+CHECKPOINT_PATH = "./ckpt/voxelmorph2d_images_15_all_directional.pt"
 OUT_PATH = "warped.png"
 FLOW_PATH = "flow.npy"
 RESIZE_FIXED = False
@@ -31,7 +33,7 @@ def draw_displacement_vectors(
     base_points: np.ndarray,
     displacement: np.ndarray,
     color: tuple[int, int, int] = (0, 255, 0),
-    thickness: int = 1,
+    thickness: int = 4,
     tip_length: float = 0.2,
     copy: bool = True,
 ) -> np.ndarray:
@@ -93,7 +95,7 @@ def main():
         device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
 
-    model = CenterNetModel()
+    model = VoxelMorph2D()
     state = torch.load(CHECKPOINT_PATH, map_location=device)
     model.load_state_dict(state)
     model.to(device)
@@ -130,9 +132,13 @@ def main():
     displacement = np.stack(
         (flow_np[0, grid_y, grid_x], flow_np[1, grid_y, grid_x]), axis=-1
     ).reshape(-1, 2)
+    displacement_mag = np.linalg.norm(flow_np,axis = 0)
+    displacement_mag_normalized = displacement_mag  / np.max(displacement_mag)
+    k = 4
+    displacement_heatmap = cv2.cvtColor(cv2.applyColorMap(cv2.resize(np.uint8(displacement_mag_normalized*255.0),(displacement_mag_normalized.shape[1]*k,displacement_mag_normalized.shape[0]*k)),cv2.COLORMAP_PLASMA),cv2.COLOR_BGR2RGB)
     flow_bg = cv2.cvtColor((fixed * 255.0).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-    flow_vis = draw_displacement_vectors(flow_bg, base_points, displacement*5)
-    axes[1, 1].imshow(cv2.cvtColor(flow_vis, cv2.COLOR_BGR2RGB))
+    flow_vis = draw_displacement_vectors(displacement_heatmap, base_points*k, displacement*k*5)
+    axes[1, 1].imshow(flow_vis)
 
     for ax in axes.flat:
         ax.axis("off")
@@ -140,6 +146,7 @@ def main():
     fig.suptitle(f"Registration time: {elapsed:.4f} seconds")
     plt.tight_layout()
     plt.show()
+    fig.savefig("fig.png",dpi=1200)
 
 
 if __name__ == "__main__":
