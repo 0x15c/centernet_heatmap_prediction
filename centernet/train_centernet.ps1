@@ -1,3 +1,3 @@
  # Windows shell script
  conda activate GelSight-homemade
- python train.py --images marker_dataset\images\train --annotations marker_dataset\labels\train --format yolo --val_images marker_dataset\images\val --val_annotations marker_dataset\labels\val --epochs 100 --batch_size 6 --project centernet --lr 1e-5 
+ python train_centernet.py --images centernet_training_dataset\yolo_dataset\images\train --annotations centernet_training_dataset\yolo_dataset\labels\train --format yolo --val_images centernet_training_dataset\yolo_dataset\images\val --val_annotations centernet_training_dataset\yolo_dataset\labels\val --epochs 100 --batch_size 6 --project centernet --lr 1e-4 

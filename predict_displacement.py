@@ -26,7 +26,7 @@ from voxelmorph.model import VoxelMorph2D
 
 # path to video file, or 0 for webcam
 VIDEO_SOURCE = "video/video_with_marker2.mp4"
-WEIGHTS_PATH = "checkpoints/latest_model.pth"
+WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e50.pth"
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_all_directional.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 

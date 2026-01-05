@@ -1,6 +1,8 @@
 # A Novel Image Processing Pipeline for Marker Extraction and Displacement Field Estimation
 
-> Abstract: We successfully combine the CenterNet heatmap prediction and VoxelMorph 2D image registration to form a novel pipeline that is used for marker extraction in the vision-based tactile sensors (VTBS). We can extract the displacement field of markers through this proposed pipeline, making tactile force estimation much easier and more robust.
+> TL;DR: We successfully combine the CenterNet heatmap prediction and VoxelMorph 2D image registration to form a novel pipeline that is used for marker extraction in the vision-based tactile sensors (VTBS). We can extract the displacement field of markers through this proposed pipeline, making tactile force estimation much easier and more robust.
+
+## Introduction
 
 We are trying to predict a heatmap of pseudo-probability distribution of markers, from the raw image of a tactile sensor, for example, the [D-Sight](https://github.com/0x15c/D-Sight). This repo is still under construction; however, we have obtained some promising results from [CenterNet](http://arxiv.org/abs/1904.07850).
 
@@ -22,3 +24,28 @@ The [VoxelMorph](https://arxiv.org/abs/1809.05231) code is employed in our code 
 We rewrite the logic of Voxelmorph to make it focused on 2D image registration. The pointwise displacement vector is calculated from the mean flow field within an area centred on that pixel. Below is an image of the vector arrows. The green dots are those estimated marker centroids in their initial position, and the red ones show the moved centroids. The arrows illustrate the direction and magnitude of the displacement field. Our code can run ~28 FPS on a workstation PC (AMD R9-9900X, RTX 5070Ti GPU), with video resolution of 640x360. The performance bottleneck is at the centernet prediction stage.
 
 ![displacement](imgs/disp.png)
+
+## How to use it
+
+### Overview
+You should train CenterNet and VoxelMorph separately. CenterNet should be trained with data with yolo-style annotations (the training script will convert marker bounding box into a Gaussian pulse depending on its area). VoxelMorph, however, is self-supervised, just feed it with a lot of images is okay.
+
+We use weights & biases to visualise the training curve. You can install all the dependencies with this command:
+```bash
+pip install requirements.txt
+```
+
+### The training procedure
+
+We trained CenterNet with images that were captured from our D-Sight sensor. We use conventional image processing to extract the masks, then manually crop the image into areas of *the proper mask* to avoid noises.
+
+Sensor image             |  Mask
+:-------------------------:|:-------------------------:
+![](imgs/sensor_output.jpg) |  ![](imgs/mask.png)
+
+Manually crop tool be like:
+![](imgs/crop.png)
+
+> All the dataset tools are avaliable at `utils/` folder of this repo.
+
+After you train the CenterNet model, you could immediately use its prediction results as training dataset of the VoxelMorph model. This model takes a fixed and a moving grayscale images as input, you can select the pair randomly or with a permanent choice of the fixed image and random moving image. In its training script we add random rotations to make the model learning direction-invariant representations. 

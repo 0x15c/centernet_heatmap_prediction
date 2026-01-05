@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--num_workers", type=int, default=4)
     ap.add_argument("--project", type=str, default="centernet-resnet9")
     ap.add_argument("--save_dir", type=str, default="checkpoints")
+    # ap.add_argument("--lr_decay_rate_epoch", type=float, default=2e-2)
     args = ap.parse_args()
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -168,10 +169,10 @@ def main():
         sched.step()
 
         # save checkpoint
-        if epoch % 10 == 0 or epoch == args.epochs:
+        if epoch % 5 == 0 or epoch == args.epochs:
             ckpt = os.path.join(args.save_dir, f"centernet_resnet9_e{epoch}.pth")
             torch.save(model.state_dict(), ckpt)
-            wandb.save(ckpt)
+            # wandb.save(ckpt)
 
         print(f"Epoch {epoch}/{args.epochs}  train_loss={train_loss_epoch:.4f}" + (f"  val_loss={val_loss_epoch:.4f}" if val_dl else ""))
 
