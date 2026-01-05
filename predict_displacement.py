@@ -44,6 +44,9 @@ OUTPUT_VIDEO_PATH = "video_with_marker.mp4"
 
 COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 
+MAX_DISP_VIZ_MAG = 2
+DISP_AMP_COEFF = 4
+
 # ============================================================
 
 
@@ -243,8 +246,13 @@ def draw_displacement_vectors(
 
     return img
 
+def blur_flow_field(flow:np.ndarray , ksize = 3) -> np.ndarray:  # flow: [2, H, W]
+    u = cv2.blur(flow[0], (ksize,ksize))
+    v = cv2.blur(flow[1], (ksize,ksize))
+    return np.stack([u,v],axis=0)
 
-def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 3) -> np.ndarray:
+
+def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 5) -> np.ndarray:
     # flow: (2, H, W), c: (N, 2) in (x, y)
     h, w = flow.shape[1], flow.shape[2]
     pts = np.asarray(c, dtype=np.float32)
@@ -256,6 +264,7 @@ def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 3) -> n
         u = flow[0, ys, xs]
         v = flow[1, ys, xs]
     else:
+        # sampling from adjecent volume, here using Gaussian blur
         ksize = 2 * radius + 1
         u_blur = cv2.blur(flow[0], (ksize, ksize),
                           borderType=cv2.BORDER_REFLECT)
@@ -360,14 +369,21 @@ def main():
             voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
         flow_cpu_tensor.copy_(flow_gpu_tensor, non_blocking=True)
         flow = flow_cpu_tensor.numpy()
+        flow_blurred = blur_flow_field(flow,ksize=3)
+        # visualize flow magnitude
+        flow_mag = cv2.resize(np.linalg.norm(flow_blurred,axis=0),(width, height),interpolation=cv2.INTER_CUBIC)
+        
+        flow_norm = flow_mag/np.max((MAX_DISP_VIZ_MAG, np.max(flow_mag)))
+        displacement_heatmap = cv2.applyColorMap(np.uint8(flow_norm*255),cv2.COLORMAP_PLASMA)
+        # cv2.imshow("displacemet magnitude",displacement_heatmap)
         # after we obtain the flow, let's do some upsampling to match the dimension:
-        h, w = flow.shape[1], flow.shape[2]
+        h, w = flow_blurred.shape[1], flow_blurred.shape[2]
         scale_x = INPUT_SIZE[0] / w
         scale_y = INPUT_SIZE[1] / h
 
-        u = cv2.resize(flow[0], (width, height),
+        u = cv2.resize(flow_blurred[0], (width, height),
                        interpolation=cv2.INTER_LINEAR) * scale_x
-        v = cv2.resize(flow[1], (width, height),
+        v = cv2.resize(flow_blurred[1], (width, height),
                        interpolation=cv2.INTER_LINEAR) * scale_y
         flow_upsampled = np.stack([u, v], axis=0)
         d = sample_flow_at_points(flow_upsampled, c0, radius=2)
@@ -378,21 +394,22 @@ def main():
         overlay = draw_keypoints(overlay, c)
         overlay = draw_keypoints(overlay, c0, color=(0, 255, 0))
         if d is not None:
-            overlay = draw_displacement_vectors(overlay, c0, d*4)
+            overlay = draw_displacement_vectors(overlay, c0, d*DISP_AMP_COEFF)
         if SHOW_FPS:
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
             prev_time = now
             cv2.putText(
                 overlay,
-                f"Frame_Count: {frame_count}",
+                f"FPS: {fps:.0f}",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1.0,
-                (255, 255, 255),
+                (0, 255, 255),
                 2,
             )
-
+        displacement_heatmap = draw_displacement_vectors(displacement_heatmap, c0, d*DISP_AMP_COEFF)
+        cv2.imshow("displacement magnitude",displacement_heatmap)
         if MAX_DISPLAY_FPS > 0:
             if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
                 # cv2.imshow("Frame", frame)
