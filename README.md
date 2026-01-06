@@ -4,6 +4,10 @@
 
 ## Introduction
 
+### Video Demo
+
+[![Watch the video](imgs/inference.png)](https://youtu.be/F6eo3ldLuks)
+
 We are trying to predict a heatmap of pseudo-probability distribution of markers, from the raw image of a tactile sensor, for example, the [D-Sight](https://github.com/0x15c/D-Sight). This repo is still under construction; however, we have obtained some promising results from [CenterNet](http://arxiv.org/abs/1904.07850).
 
 ![CenterNet-Arch](imgs/network/centernet.svg)
