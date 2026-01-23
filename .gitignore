@@ -9,5 +9,6 @@ predictions/
 .vscode/
 __pycache__/
 visualisation/
+dataset_new_sensor/
 *.mp4
 *.pt

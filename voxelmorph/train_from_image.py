@@ -203,7 +203,7 @@ def main():
                   "epoch": epoch}, step=global_step)
         if epoch % 5 == 0:
             torch.save(model.state_dict(),
-                       f"{checkpoint_path}/voxelmorph2d_images_{epoch}_all_directional.pt")
+                       f"{checkpoint_path}/voxelmorph2d_images_{epoch}_new_sensor.pt")
             print(f"Saved checkpoint to {checkpoint_path}")
 
     wandb.finish()
