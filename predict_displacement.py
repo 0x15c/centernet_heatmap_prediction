@@ -14,7 +14,8 @@ import cv2
 import numpy as np
 import torch
 import torchvision.transforms as T
-import skimage
+from torchvision.transforms.functional import gaussian_blur
+# import skimage
 
 from centernet.centernet_model import CenterNetModel
 # from cpd_net.cpd_model import PointRegressor
@@ -27,7 +28,7 @@ from voxelmorph.model import VoxelMorph2D
 
 # path to video file, or 0 for webcam
 VIDEO_SOURCE = "video/eval2.mp4"
-WEIGHTS_PATH = "centernet/checkpoints/latest_model_new_sensor.pth"
+WEIGHTS_PATH = "centernet/checkpoints/latest_model_2.pth"
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_new_sensor.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
@@ -56,66 +57,66 @@ output_size = (18, 32)
 
 # ============================================================
 
-def extract_optical_flow_field(ref, img):
-    # Convert to grayscale
-    # ref = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-    # img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    flow = cv2.calcOpticalFlowFarneback(
-        ref, img, None,
-        Farneback_params[0], Farneback_params[1], Farneback_params[2],
-        Farneback_params[3], Farneback_params[4], Farneback_params[5],
-        Farneback_params[6]
-    )
+# def extract_optical_flow_field(ref, img):
+#     # Convert to grayscale
+#     # ref = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+#     # img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+#     flow = cv2.calcOpticalFlowFarneback(
+#         ref, img, None,
+#         Farneback_params[0], Farneback_params[1], Farneback_params[2],
+#         Farneback_params[3], Farneback_params[4], Farneback_params[5],
+#         Farneback_params[6]
+#     )
 
-    flow_dwn = skimage.measure.block_reduce(
-        flow, (pool_kernel_size, pool_kernel_size, 1), np.mean)
-    flow_dwn = cv2.resize(
-        flow_dwn, (output_size[1], output_size[0]), interpolation=cv2.INTER_AREA)
+#     flow_dwn = skimage.measure.block_reduce(
+#         flow, (pool_kernel_size, pool_kernel_size, 1), np.mean)
+#     flow_dwn = cv2.resize(
+#         flow_dwn, (output_size[1], output_size[0]), interpolation=cv2.INTER_AREA)
 
-    u = flow_dwn[:, :, 0]
-    v = flow_dwn[:, :, 1]
-    return u, v
+#     u = flow_dwn[:, :, 0]
+#     v = flow_dwn[:, :, 1]
+#     return u, v
 
 
-def draw_flow_vectors(underlay_bgr, u, v, *,
-                      color=(0, 255, 255),
-                      thickness=2,
-                      tipLength=0.15,
-                      vec_scale=4.0,
-                      sample_every=1):
-    """
-    underlay_bgr : (H, W, 3) uint8 image to draw on
-    u, v         : (h, w) flow components (float), defined on a small grid
-    vec_scale    : scales vector lengths for visualization
-    sample_every : draw every Nth vector on the small grid
-    """
-    H, W = underlay_bgr.shape[:2]
-    h, w = u.shape
+# def draw_flow_vectors(underlay_bgr, u, v, *,
+#                       color=(0, 255, 255),
+#                       thickness=2,
+#                       tipLength=0.15,
+#                       vec_scale=4.0,
+#                       sample_every=1):
+#     """
+#     underlay_bgr : (H, W, 3) uint8 image to draw on
+#     u, v         : (h, w) flow components (float), defined on a small grid
+#     vec_scale    : scales vector lengths for visualization
+#     sample_every : draw every Nth vector on the small grid
+#     """
+#     H, W = underlay_bgr.shape[:2]
+#     h, w = u.shape
 
-    out = underlay_bgr.copy()
+#     out = underlay_bgr.copy()
 
-    # Grid cell size in the big image
-    cell_w = W / w
-    cell_h = H / h
+#     # Grid cell size in the big image
+#     cell_w = W / w
+#     cell_h = H / h
 
-    for gy in range(0, h, sample_every):
-        for gx in range(0, w, sample_every):
-            # Place the vector at the center of its grid cell
-            x0 = int((gx + 0.5) * cell_w)
-            y0 = int((gy + 0.5) * cell_h)
+#     for gy in range(0, h, sample_every):
+#         for gx in range(0, w, sample_every):
+#             # Place the vector at the center of its grid cell
+#             x0 = int((gx + 0.5) * cell_w)
+#             y0 = int((gy + 0.5) * cell_h)
 
-            du = float(u[gy, gx]) * vec_scale
-            dv = float(v[gy, gx]) * vec_scale
+#             du = float(u[gy, gx]) * vec_scale
+#             dv = float(v[gy, gx]) * vec_scale
 
-            x1 = int(round(x0 + du))
-            y1 = int(round(y0 + dv))
+#             x1 = int(round(x0 + du))
+#             y1 = int(round(y0 + dv))
 
-            # Draw arrow
-            cv2.arrowedLine(out, (x0, y0), (x1, y1),
-                            color=color, thickness=thickness,
-                            tipLength=tipLength, line_type=cv2.LINE_AA)
+#             # Draw arrow
+#             cv2.arrowedLine(out, (x0, y0), (x1, y1),
+#                             color=color, thickness=thickness,
+#                             tipLength=tipLength, line_type=cv2.LINE_AA)
 
-    return out
+#     return out
 
 
 def get_centernet_model(weights_path: str, device: torch.device) -> CenterNetModel:
@@ -413,6 +414,8 @@ def main():
         # please be noted that the outputed probability map will be downsampled by 4x
         # that's why we have resize everywhere
         probmap_inferred = centernet_infer(centernet_model, x, device)
+        # let's try to have Gaussian blur here
+        # probmap_inferred = gaussian_blur(probmap_inferred.unsqueeze(0)*3,kernel_size=5).squeeze()
         probmap_inferred_cpu_tensor.copy_(probmap_inferred, non_blocking=True)
         probmap_inferred_cpu = probmap_inferred_cpu_tensor.numpy()
         # find the point of interest
@@ -422,18 +425,18 @@ def main():
         # experimental: try to use optical flow to estimate displacement field, from centernet output
         # we will have Gaussian blur here, because we want the optical flow coherent
         # without Gaussian blur, the displacement vector will only significant at position of markers
-        if frame_count == 0:
-            # optical_ref_frame = heat_gray
-            optical_ref_frame = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-            optical_ref_frame = cv2.resize(optical_ref_frame,(W//8,H//8))
+        # if frame_count == 0:
+        #     # optical_ref_frame = heat_gray
+        #     optical_ref_frame = cv2.GaussianBlur(heat_gray,(15,15),4.0)
+        #     optical_ref_frame = cv2.resize(optical_ref_frame,(W//8,H//8))
             
-        else:
-            blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-            blurred_heat_gray = cv2.resize(blurred_heat_gray,(W//8,H//8))
-            # blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-            u_of, v_of = extract_optical_flow_field(optical_ref_frame, blurred_heat_gray)
-            of_overlay = draw_flow_vectors(frame_downsampled, u_of, v_of)
-            cv2.imshow("optical flow disp field pred",of_overlay)
+        # else:
+        #     blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
+        #     blurred_heat_gray = cv2.resize(blurred_heat_gray,(W//8,H//8))
+        #     # blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
+        #     u_of, v_of = extract_optical_flow_field(optical_ref_frame, blurred_heat_gray)
+        #     of_overlay = draw_flow_vectors(frame_downsampled, u_of, v_of)
+        #     cv2.imshow("optical flow disp field pred",of_overlay)
 
         # heat_clahe = clahe.apply(heat_gray)
         # orb_keypoints = orb_extractor.detect(heat_gray, None)

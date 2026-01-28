@@ -15,7 +15,7 @@ except ImportError as exc:
         "wandb is required for this script. Install with `pip install wandb`."
     ) from exc
 
-
+# select dir to images
 IMAGE_DIR = "../screen_shots"
 # e.g. "fixed.png" or None for random fixed images
 FIXED_IMAGE_NAME = "frame_0.jpg"
@@ -36,6 +36,7 @@ ROTATE_CHOICES = (0, 1, 3)  # 0, +90, -90 (k=3)
 
 
 def load_gray(path, resize_to=None):
+    # load image as grayscale, given file path.
     image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if image is None:
         raise FileNotFoundError(f"Could not read image: {path}")
@@ -48,6 +49,7 @@ def load_gray(path, resize_to=None):
 
 
 def load_images_in_memory(image_dir, resize_to=None):
+    # load images to a list
     exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
     files = [
         f
@@ -62,7 +64,7 @@ def load_images_in_memory(image_dir, resize_to=None):
         path = os.path.join(image_dir, fname)
         img = load_gray(path, resize_to=resize_to)
         images.append((fname, img))
-
+    # inspection of image dimension
     if resize_to is None:
         h0, w0 = images[0][1].shape
         for name, img in images:
@@ -70,18 +72,21 @@ def load_images_in_memory(image_dir, resize_to=None):
                 raise ValueError(
                     "Images have different sizes. Set RESIZE_TO to enforce a size."
                 )
-
+    # get tensors list
     tensors = []
     for name, img in images:
-        tensors.append(torch.from_numpy(img)[None, ...])  # (1, H, W)
+        # adding a leading dimension to form (1, H, W)
+        tensors.append(torch.from_numpy(img)[None, ...])
     return files, tensors
 
 
 def build_batch(moving_tensors, batch_indices, fixed_tensor=None):
     moving = torch.stack([moving_tensors[i] for i in batch_indices], dim=0)
     if fixed_tensor is not None:
+        # creating a batch of identical fixed images
         fixed = fixed_tensor.expand(moving.shape[0], -1, -1, -1)
     else:
+        # sample a batch of images
         rand_idx = [random.randint(0, len(moving_tensors) - 1)
                     for _ in batch_indices]
         fixed = torch.stack([moving_tensors[i] for i in rand_idx], dim=0)
@@ -89,6 +94,7 @@ def build_batch(moving_tensors, batch_indices, fixed_tensor=None):
 
 
 def _resize_to_square(img, size):
+    # set to square, in order to do flip operations
     return F.interpolate(
         img.unsqueeze(0),
         size=(size, size),
@@ -178,6 +184,7 @@ def main():
                 tensors, batch_indices, fixed_tensor=fixed_tensor)
             moving = moving.to(device)
             fixed = fixed.to(device)
+            # obtain a batch
             moving, fixed = augment_pairs(
                 moving, fixed, hflip_prob=HFLIP_PROB, rotate_choices=ROTATE_CHOICES
             )
