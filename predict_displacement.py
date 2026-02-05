@@ -27,12 +27,13 @@ from voxelmorph.model import VoxelMorph2D
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/eval2.mp4"
-WEIGHTS_PATH = "centernet/checkpoints/latest_model_2.pth"
+VIDEO_SOURCE = "video/eval3.mp4" #"force_regression_test/Raw_Session_20260205_234104.avi"  # "video/eval3.mp4"
+WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e35.pth"  # centernet
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_new_sensor.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
+CONCAT_SIZE = (INPUT_SIZE[0]*2, INPUT_SIZE[1]*2)
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
 OVERLAY_ALPHA = 0.5          # original frame weight
@@ -315,10 +316,12 @@ def draw_displacement_vectors(
 
     return img
 
-def blur_flow_field(flow:np.ndarray , ksize = 3) -> np.ndarray:  # flow: [2, H, W]
-    u = cv2.blur(flow[0], (ksize,ksize))
-    v = cv2.blur(flow[1], (ksize,ksize))
-    return np.stack([u,v],axis=0)
+
+# flow: [2, H, W]
+def blur_flow_field(flow: np.ndarray, ksize=3) -> np.ndarray:
+    u = cv2.blur(flow[0], (ksize, ksize))
+    v = cv2.blur(flow[1], (ksize, ksize))
+    return np.stack([u, v], axis=0)
 
 
 def sample_flow_at_points(flow: np.ndarray, c: np.ndarray, radius: int = 5) -> np.ndarray:
@@ -383,7 +386,7 @@ def main():
             OUTPUT_VIDEO_PATH,
             cv2.VideoWriter_fourcc(*"mp4v"),
             fps,
-            INPUT_SIZE,
+            CONCAT_SIZE,
         )
 
     prev_time = time.time()
@@ -399,8 +402,10 @@ def main():
 
     # this is something like a buffer
     # this is because the centernet infer model returns a tensor 1/4 of its original size.
-    probmap_inferred_cpu_tensor = torch.empty((height//4, width//4), pin_memory=True)
-    flow_cpu_tensor = torch.empty((2,height//4, width//4), pin_memory=True) # [2, H, W] Tensor
+    probmap_inferred_cpu_tensor = torch.empty(
+        (height//4, width//4), pin_memory=True)
+    flow_cpu_tensor = torch.empty(
+        (2, height//4, width//4), pin_memory=True)  # [2, H, W] Tensor
 
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
@@ -408,7 +413,6 @@ def main():
             height, width))  # x: (N, C, H, W)
         frame_downsampled = cv2.resize(
             frame, (width, height), cv2.INTER_NEAREST)
-
 
         # get inference probability map
         # please be noted that the outputed probability map will be downsampled by 4x
@@ -429,7 +433,7 @@ def main():
         #     # optical_ref_frame = heat_gray
         #     optical_ref_frame = cv2.GaussianBlur(heat_gray,(15,15),4.0)
         #     optical_ref_frame = cv2.resize(optical_ref_frame,(W//8,H//8))
-            
+
         # else:
         #     blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
         #     blurred_heat_gray = cv2.resize(blurred_heat_gray,(W//8,H//8))
@@ -458,12 +462,14 @@ def main():
             voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
         flow_cpu_tensor.copy_(flow_gpu_tensor, non_blocking=True)
         flow = flow_cpu_tensor.numpy()
-        flow_blurred = blur_flow_field(flow,ksize=3)
+        flow_blurred = blur_flow_field(flow, ksize=3)
         # visualize flow magnitude
-        flow_mag = cv2.resize(np.linalg.norm(flow_blurred,axis=0),(width, height),interpolation=cv2.INTER_CUBIC)
-        
+        flow_mag = cv2.resize(np.linalg.norm(
+            flow_blurred, axis=0), (width, height), interpolation=cv2.INTER_CUBIC)
+
         flow_norm = flow_mag/np.max((MAX_DISP_VIZ_MAG, np.max(flow_mag)))
-        displacement_heatmap = cv2.applyColorMap(np.uint8(flow_norm*255),cv2.COLORMAP_PLASMA)
+        displacement_heatmap = cv2.applyColorMap(
+            np.uint8(flow_norm*255), cv2.COLORMAP_PLASMA)
         # cv2.imshow("displacemet magnitude",displacement_heatmap)
         # after we obtain the flow, let's do some upsampling to match the dimension:
         h, w = flow_blurred.shape[1], flow_blurred.shape[2]
@@ -497,23 +503,27 @@ def main():
                 (0, 255, 255),
                 2,
             )
-        displacement_heatmap = draw_displacement_vectors(displacement_heatmap, c0, d*DISP_AMP_COEFF)
-        cv2.imshow("Displacement Magnitude",displacement_heatmap)
-        if MAX_DISPLAY_FPS > 0:
-            if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
-                # cv2.imshow("Frame", frame)
-                cv2.imshow("Marker Distribution", heat_color)
-                cv2.imshow("Sensor Video Input", cv2.resize(frame,INPUT_SIZE))
-                cv2.imshow("Displacement Field", overlay)
-                last_show = time.time()
-        else:
-            # cv2.imshow("Frame", frame)
-            cv2.imshow("Sensor Video Input", cv2.resize(frame,INPUT_SIZE))
-            cv2.imshow("Marker Distribution", heat_color)
-            cv2.imshow("Displacement Field", overlay)
-
+        displacement_heatmap = draw_displacement_vectors(
+            displacement_heatmap, c0, d*DISP_AMP_COEFF)
+        # cv2.imshow("Displacement Magnitude", displacement_heatmap)
+        # # if MAX_DISPLAY_FPS > 0:
+        # #     if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
+        # #         # cv2.imshow("Frame", frame)
+        # # cv2.imshow("Marker Distribution", heat_color)
+        # # cv2.imshow("Sensor Video Input", cv2.resize(frame,INPUT_SIZE))
+        # # cv2.imshow("Displacement Field", overlay)
+        # # last_show = time.time()
+        # # else:
+        # #     # cv2.imshow("Frame", frame)
+        # cv2.imshow("Sensor Video Input", cv2.resize(frame, INPUT_SIZE))
+        # cv2.imshow("Marker Distribution", heat_color)
+        # cv2.imshow("Displacement Field", overlay)
+        frame_row_0 = np.concatenate((overlay, heat_color), axis=0)
+        frame_row_1 = np.concatenate((displacement_heatmap, cv2.resize(frame, INPUT_SIZE)), axis=0)
+        frame_concatenated = np.concatenate((frame_row_0,frame_row_1),axis=1)
+        cv2.imshow("concatenated_frame",frame_concatenated)
         if writer is not None:
-            writer.write(overlay)
+            writer.write(frame_concatenated)
 
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord("q")):
