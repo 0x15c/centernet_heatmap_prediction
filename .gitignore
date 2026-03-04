@@ -12,3 +12,7 @@ visualisation/
 dataset_new_sensor/
 *.mp4
 *.pt
+centernet/centernet_training_dataset/*
+*.jsonl
+*.avi
+pynhhd-v1.1/
