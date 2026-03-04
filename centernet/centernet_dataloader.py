@@ -185,7 +185,10 @@ class CenterNetDataset(Dataset):
             cx_out, cy_out = cx / self.stride, cy / self.stride
             x, y = int(cx_out), int(cy_out)
             w_out, h_out = bw / self.stride, bh / self.stride
-            r = int(max(0.0, gaussian_radius((math.ceil(h_out), math.ceil(w_out)), 0.7)))
+            # use variable Gaussian 
+            # r = int(max(0.0, gaussian_radius((math.ceil(h_out), math.ceil(w_out)), 0.7)))
+            # use fixed Gaussian
+            r = 3
             draw_gaussian(hm[cls], (x, y), r)
             centers.append((cls, x, y, r))
 
