@@ -8,6 +8,7 @@ Edit the variables in the CONFIG section, then run:
 import os
 import time
 from typing import Tuple
+import json
 
 from sklearn.cluster import DBSCAN
 import cv2
@@ -22,18 +23,22 @@ from centernet.centernet_model import CenterNetModel
 # from cpd_net.pred import displacement_predictor
 from voxelmorph.model import VoxelMorph2D
 
+from helmholtz import helmholtz_hodge_2d_fft
+import matplotlib.pyplot as plt 
+
 # ============================================================
 # CONFIG — EDIT THESE
 # ============================================================
 
 # path to video file, or 0 for webcam
-VIDEO_SOURCE = "video/eval3.mp4" #"force_regression_test/Raw_Session_20260205_234104.avi"  # "video/eval3.mp4"
+# "force_regression_test/Raw_Session_20260205_234104.avi"  # "video/eval3.mp4"
+VIDEO_SOURCE = "force_regression_test/Raw_Session_20260302_155834.avi"
 WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e35.pth"  # centernet
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_new_sensor.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
-INPUT_SIZE = (640, 360)      # model input resolution, (W, H)
-CONCAT_SIZE = (INPUT_SIZE[0]*2, INPUT_SIZE[1]*2)
+INPUT_SIZE = (600, 460)      # model input resolution, (W, H)
+CONCAT_SIZE = (INPUT_SIZE[0]*3, INPUT_SIZE[1]*2)
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
 OVERLAY_ALPHA = 0.5          # original frame weight
@@ -43,81 +48,15 @@ SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
 
 SAVE_OUTPUT = True
-OUTPUT_VIDEO_PATH = "video_with_marker.mp4"
+OUTPUT_VIDEO_PATH = "video_with_marker_Session_20260302_155834.mp4"
+DISPLACEMENT_OUTPUT_JSON_PATH = "force_regression_test/Session_20260302_155834_full_data_logging_2.jsonl"
 
 COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 
-MAX_DISP_VIZ_MAG = 2
+MAX_DISP_VIZ_MAG = 5.0
 DISP_AMP_COEFF = 4
 
-# Settings for Farneback optical flow
 
-Farneback_params = (0.5, 3, 15, 3, 5, 1.2, 0)
-pool_kernel_size = 15
-output_size = (18, 32)
-
-# ============================================================
-
-# def extract_optical_flow_field(ref, img):
-#     # Convert to grayscale
-#     # ref = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
-#     # img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-#     flow = cv2.calcOpticalFlowFarneback(
-#         ref, img, None,
-#         Farneback_params[0], Farneback_params[1], Farneback_params[2],
-#         Farneback_params[3], Farneback_params[4], Farneback_params[5],
-#         Farneback_params[6]
-#     )
-
-#     flow_dwn = skimage.measure.block_reduce(
-#         flow, (pool_kernel_size, pool_kernel_size, 1), np.mean)
-#     flow_dwn = cv2.resize(
-#         flow_dwn, (output_size[1], output_size[0]), interpolation=cv2.INTER_AREA)
-
-#     u = flow_dwn[:, :, 0]
-#     v = flow_dwn[:, :, 1]
-#     return u, v
-
-
-# def draw_flow_vectors(underlay_bgr, u, v, *,
-#                       color=(0, 255, 255),
-#                       thickness=2,
-#                       tipLength=0.15,
-#                       vec_scale=4.0,
-#                       sample_every=1):
-#     """
-#     underlay_bgr : (H, W, 3) uint8 image to draw on
-#     u, v         : (h, w) flow components (float), defined on a small grid
-#     vec_scale    : scales vector lengths for visualization
-#     sample_every : draw every Nth vector on the small grid
-#     """
-#     H, W = underlay_bgr.shape[:2]
-#     h, w = u.shape
-
-#     out = underlay_bgr.copy()
-
-#     # Grid cell size in the big image
-#     cell_w = W / w
-#     cell_h = H / h
-
-#     for gy in range(0, h, sample_every):
-#         for gx in range(0, w, sample_every):
-#             # Place the vector at the center of its grid cell
-#             x0 = int((gx + 0.5) * cell_w)
-#             y0 = int((gy + 0.5) * cell_h)
-
-#             du = float(u[gy, gx]) * vec_scale
-#             dv = float(v[gy, gx]) * vec_scale
-
-#             x1 = int(round(x0 + du))
-#             y1 = int(round(y0 + dv))
-
-#             # Draw arrow
-#             cv2.arrowedLine(out, (x0, y0), (x1, y1),
-#                             color=color, thickness=thickness,
-#                             tipLength=tipLength, line_type=cv2.LINE_AA)
-
-#     return out
 
 
 def get_centernet_model(weights_path: str, device: torch.device) -> CenterNetModel:
@@ -390,15 +329,9 @@ def main():
         )
 
     prev_time = time.time()
-    last_show = 0.0
-
-    # image features, conventional CV
-    # orb_extractor = cv2.ORB_create(nfeatures=2000, edgeThreshold=0)
     frame_count = 0
     # grid sampling flow
     height, width = INPUT_SIZE[1], INPUT_SIZE[0]
-    # step = max(1, min(height, width) // 12)
-    # base_points, grid_x, grid_y = sample_regular_grid(height, width, step)
 
     # this is something like a buffer
     # this is because the centernet infer model returns a tensor 1/4 of its original size.
@@ -406,6 +339,13 @@ def main():
         (height//4, width//4), pin_memory=True)
     flow_cpu_tensor = torch.empty(
         (2, height//4, width//4), pin_memory=True)  # [2, H, W] Tensor
+    # matplotlib settings, grid data sampling
+    # X,Y = np.meshgrid(np.linspace(0,height//4,height//4),np.linspace(0,width//4,width//4),indexing="ij")
+    
+    # plt.ion()
+    # fig, ax = plt.subplots()
+    # q = ax.quiver(X,Y,X,Y)
+    
 
     while True:
         # resize x to INPUT_SIZE tensor, if input_size = None, it will do no resize on input.
@@ -426,28 +366,6 @@ def main():
         heat_raw = get_heatmap_raw(probmap_inferred_cpu, (height, width))
         # convert into grayscale
         heat_gray = np.uint8(heat_raw*255.0)
-        # experimental: try to use optical flow to estimate displacement field, from centernet output
-        # we will have Gaussian blur here, because we want the optical flow coherent
-        # without Gaussian blur, the displacement vector will only significant at position of markers
-        # if frame_count == 0:
-        #     # optical_ref_frame = heat_gray
-        #     optical_ref_frame = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-        #     optical_ref_frame = cv2.resize(optical_ref_frame,(W//8,H//8))
-
-        # else:
-        #     blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-        #     blurred_heat_gray = cv2.resize(blurred_heat_gray,(W//8,H//8))
-        #     # blurred_heat_gray = cv2.GaussianBlur(heat_gray,(15,15),4.0)
-        #     u_of, v_of = extract_optical_flow_field(optical_ref_frame, blurred_heat_gray)
-        #     of_overlay = draw_flow_vectors(frame_downsampled, u_of, v_of)
-        #     cv2.imshow("optical flow disp field pred",of_overlay)
-
-        # heat_clahe = clahe.apply(heat_gray)
-        # orb_keypoints = orb_extractor.detect(heat_gray, None)
-        # frame_show = draw_keypoints(cv2.cvtColor(
-        #     heat_gray, cv2.COLOR_GRAY2BGR), orb_keypoints)
-        # cv2.imshow("grayscale_heatmap", frame_show)
-        # model outputs the resized tensor compared to input, thus the output should be resized
 
         # get cluster centroids
         c = get_pointset(heat_gray)
@@ -455,21 +373,29 @@ def main():
             c0 = c
             d = None
             frame0_tensor = probmap_inferred
-        # if frame_count % 10 == 0:
-        #     cv2.imwrite(f"screen_shots/{frame_count//10}.png",cv2.cvtColor(heat_gray,cv2.COLOR_GRAY2BGR))
-        # [flow] is a tensor
         flow_gpu_tensor = voxelmorph_infer(
             voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
         flow_cpu_tensor.copy_(flow_gpu_tensor, non_blocking=True)
         flow = flow_cpu_tensor.numpy()
+        # Phi, Psi is the potential
+        flow_grad, flow_rot, flow_harmonic, Phi, Psi = helmholtz_hodge_2d_fft(flow,return_potentials=True)
+        Phi_max_diff = np.max(Phi)-np.min(Phi)
+        # flow_grad_normlized_resized = cv2.normalize(flow_grad,None)
+        # q.set_UVC(flow_harmonic[0],flow_harmonic[1])
+        # plt.draw()
+        # plt.pause(0.1)
+        flow_vector_avg = np.mean(flow,axis=(1,2))
         flow_blurred = blur_flow_field(flow, ksize=3)
         # visualize flow magnitude
         flow_mag = cv2.resize(np.linalg.norm(
             flow_blurred, axis=0), (width, height), interpolation=cv2.INTER_CUBIC)
 
         flow_norm = flow_mag/np.max((MAX_DISP_VIZ_MAG, np.max(flow_mag)))
-        displacement_heatmap = cv2.applyColorMap(
-            np.uint8(flow_norm*255), cv2.COLORMAP_PLASMA)
+        Phi_norm = Phi/np.max((MAX_DISP_VIZ_MAG,np.max(Phi)))
+        Psi_norm = Psi/np.max((MAX_DISP_VIZ_MAG,np.max(Psi)))
+        displacement_heatmap = cv2.applyColorMap(np.uint8(flow_norm*255), cv2.COLORMAP_PLASMA)
+        Phi_hm = cv2.applyColorMap(np.uint8(Phi_norm*255), cv2.COLORMAP_JET)
+        Psi_hm = cv2.applyColorMap(np.uint8(Psi_norm*255), cv2.COLORMAP_PLASMA)
         # cv2.imshow("displacemet magnitude",displacement_heatmap)
         # after we obtain the flow, let's do some upsampling to match the dimension:
         h, w = flow_blurred.shape[1], flow_blurred.shape[2]
@@ -482,7 +408,11 @@ def main():
                        interpolation=cv2.INTER_LINEAR) * scale_y
         flow_upsampled = np.stack([u, v], axis=0)
         d = sample_flow_at_points(flow_upsampled, c0, radius=2)
-
+        # flow_vector is the collapsed summary of flow, it averages the u and v channel, producing a 2x1 column vector.
+        # this is useful for single-point force regression.
+        flow_vector_c0 = np.mean(d, axis=0) # sampled at c0
+        flow_vector_c1 = np.mean(sample_flow_at_points(flow_upsampled,c,radius=2), axis=0)
+        flow_vector_harmonics = np.mean(flow_harmonic, axis=(1,2))
         heat_color = render_heatmap(probmap_inferred_cpu, (height, width))
         overlay = cv2.addWeighted(
             frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
@@ -494,37 +424,39 @@ def main():
             now = time.time()
             fps = 1.0 / max(1e-6, now - prev_time)
             prev_time = now
-            cv2.putText(
-                overlay,
-                f"FPS: {fps:.0f}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 255, 255),
-                2,
-            )
+            cv2.putText(overlay, f"FPS: {fps:.0f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        
         displacement_heatmap = draw_displacement_vectors(
             displacement_heatmap, c0, d*DISP_AMP_COEFF)
-        # cv2.imshow("Displacement Magnitude", displacement_heatmap)
-        # # if MAX_DISPLAY_FPS > 0:
-        # #     if time.time() - last_show >= 1.0 / MAX_DISPLAY_FPS:
-        # #         # cv2.imshow("Frame", frame)
-        # # cv2.imshow("Marker Distribution", heat_color)
-        # # cv2.imshow("Sensor Video Input", cv2.resize(frame,INPUT_SIZE))
-        # # cv2.imshow("Displacement Field", overlay)
-        # # last_show = time.time()
-        # # else:
-        # #     # cv2.imshow("Frame", frame)
-        # cv2.imshow("Sensor Video Input", cv2.resize(frame, INPUT_SIZE))
-        # cv2.imshow("Marker Distribution", heat_color)
-        # cv2.imshow("Displacement Field", overlay)
+        cv2.putText(displacement_heatmap, f"mean disp. x:{flow_vector_avg[0]:.2f}, y:{flow_vector_avg[1]:.2f}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
         frame_row_0 = np.concatenate((overlay, heat_color), axis=0)
-        frame_row_1 = np.concatenate((displacement_heatmap, cv2.resize(frame, INPUT_SIZE)), axis=0)
-        frame_concatenated = np.concatenate((frame_row_0,frame_row_1),axis=1)
-        cv2.imshow("concatenated_frame",frame_concatenated)
+        frame_row_1 = np.concatenate(
+            (displacement_heatmap, cv2.resize(frame, INPUT_SIZE)), axis=0)
+        frame_col_1 = np.concatenate((cv2.resize(Phi_hm, INPUT_SIZE),cv2.resize(Psi_hm, INPUT_SIZE)),axis=0)
+        frame_sub_concatenated = np.concatenate((frame_row_0, frame_row_1), axis=1)
+        frame_concatenated = np.concatenate((frame_sub_concatenated, frame_col_1), axis=1)
+        cv2.imshow("concatenated_frame", frame_concatenated)
+        # write to video
         if writer is not None:
             writer.write(frame_concatenated)
-
+        # write to json
+        data_record = {
+            "frame": frame_count,
+            "disp_x_sample_based_c0": flow_vector_c0[0].astype(float).tolist(),
+            "disp_y_sample_based_c0": flow_vector_c0[1].astype(float).tolist(),
+            "disp_x_sample_based_c1": flow_vector_c1[0].astype(float).tolist(),
+            "disp_y_sample_based_c1": flow_vector_c1[1].astype(float).tolist(),
+            "disp_x_harmonics": flow_vector_harmonics[0].astype(float).tolist(),
+            "disp_y_harmonics": flow_vector_harmonics[1].astype(float).tolist(),
+            "disp_x_avg": flow_vector_avg[0].astype(float).tolist(),
+            "disp_y_avg": flow_vector_avg[1].astype(float).tolist(),
+            "Phi_max_diff": Phi_max_diff.astype(float).tolist(),
+        }
+        with open(DISPLACEMENT_OUTPUT_JSON_PATH, 'a', encoding='utf-8') as f:
+            displacement_json = json.dumps(data_record)
+            f.write(displacement_json + '\n')
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord("q")):
             break
@@ -533,6 +465,7 @@ def main():
         if not ret:
             break
         frame_count += 1
+
     cap.release()
     if writer:
         writer.release()
