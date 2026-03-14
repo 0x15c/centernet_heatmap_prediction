@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 
 # path to video file, or 0 for webcam
 # "force_regression_test/Raw_Session_20260205_234104.avi"  # "video/eval3.mp4"
-VIDEO_SOURCE = "force_regression_test/Raw_Session_20260302_155834.avi"
+VIDEO_SOURCE = "force_regression_test/Raw_Session_20260311_223951.avi"
 WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e35.pth"  # centernet
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_15_new_sensor.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
@@ -48,8 +48,8 @@ SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
 
 SAVE_OUTPUT = True
-OUTPUT_VIDEO_PATH = "video_with_marker_Session_20260302_155834.mp4"
-DISPLACEMENT_OUTPUT_JSON_PATH = "force_regression_test/Session_20260302_155834_full_data_logging_2.jsonl"
+OUTPUT_VIDEO_PATH = "Session_20260311_223951.mp4"
+DISPLACEMENT_OUTPUT_JSON_PATH = "mlp_force_prediction/Session_20260311_223951_MLP.jsonl"
 
 COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 
@@ -370,8 +370,8 @@ def main():
         # get cluster centroids
         c = get_pointset(heat_gray)
         if frame_count <= 0:
-            c0 = c
-            d = None
+            c0 = c # c0 is the markers point set sampled at the first frame
+            d = None 
             frame0_tensor = probmap_inferred
         flow_gpu_tensor = voxelmorph_infer(
             voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
@@ -411,7 +411,7 @@ def main():
         # flow_vector is the collapsed summary of flow, it averages the u and v channel, producing a 2x1 column vector.
         # this is useful for single-point force regression.
         flow_vector_c0 = np.mean(d, axis=0) # sampled at c0
-        flow_vector_c1 = np.mean(sample_flow_at_points(flow_upsampled,c,radius=2), axis=0)
+        flow_vector_c1 = np.mean(sample_flow_at_points(flow_upsampled,c,radius=2), axis=0) # sampled at current marker position
         flow_vector_harmonics = np.mean(flow_harmonic, axis=(1,2))
         heat_color = render_heatmap(probmap_inferred_cpu, (height, width))
         overlay = cv2.addWeighted(
@@ -441,18 +441,29 @@ def main():
         # write to video
         if writer is not None:
             writer.write(frame_concatenated)
+        # regularize the c0 and c1 and the displacement vectors
+        c0r = np.stack((c0[:,0]/width,c0[:,1]/height),axis=1)
+        c1r = np.stack((c[:,0]/width,c[:,1]/height),axis=1)
+        dr = np.stack((d[:,0]/width,d[:,1]/width),axis=1) # notice here we divide all components by width to preserve the ratio information
+        pass
+
+
         # write to json
         data_record = {
             "frame": frame_count,
-            "disp_x_sample_based_c0": flow_vector_c0[0].astype(float).tolist(),
-            "disp_y_sample_based_c0": flow_vector_c0[1].astype(float).tolist(),
-            "disp_x_sample_based_c1": flow_vector_c1[0].astype(float).tolist(),
-            "disp_y_sample_based_c1": flow_vector_c1[1].astype(float).tolist(),
-            "disp_x_harmonics": flow_vector_harmonics[0].astype(float).tolist(),
-            "disp_y_harmonics": flow_vector_harmonics[1].astype(float).tolist(),
-            "disp_x_avg": flow_vector_avg[0].astype(float).tolist(),
-            "disp_y_avg": flow_vector_avg[1].astype(float).tolist(),
-            "Phi_max_diff": Phi_max_diff.astype(float).tolist(),
+            "disp_x_sample_based_c0": flow_vector_c0[0].astype(float),
+            "disp_y_sample_based_c0": flow_vector_c0[1].astype(float),
+            "disp_x_sample_based_c1": flow_vector_c1[0].astype(float),
+            "disp_y_sample_based_c1": flow_vector_c1[1].astype(float),
+            "disp_x_harmonics": flow_vector_harmonics[0].astype(float),
+            "disp_y_harmonics": flow_vector_harmonics[1].astype(float),
+            "disp_x_avg": flow_vector_avg[0].astype(float),
+            "disp_y_avg": flow_vector_avg[1].astype(float),
+            "Phi_max_diff": Phi_max_diff.astype(float),
+            "c1r": c1r.astype(float).tolist(),
+            "c0r": c1r.astype(float).tolist(),
+            "dr": dr.astype(float).tolist(),
+
         }
         with open(DISPLACEMENT_OUTPUT_JSON_PATH, 'a', encoding='utf-8') as f:
             displacement_json = json.dumps(data_record)

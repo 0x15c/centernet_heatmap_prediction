@@ -5,12 +5,12 @@ from matplotlib.widgets import Slider
 from scipy.stats import linregress
 
 # 1. Load and Sync Data
-gt_df = pd.read_json("Session_20260302_155834.jsonl", lines=True)
-disp_df = pd.read_json("Session_20260302_155834_full_data_logging.jsonl", lines=True)
+gt_df = pd.read_json("Session_20260311_223951.jsonl", lines=True)
+disp_df = pd.read_json("Session_20260311_223951_MLP.jsonl", lines=True)
 df = pd.merge(gt_df, disp_df, on='frame')
 
 # Multi-status selection
-active_statuses = ["Holding_Shear"] # "Shearing (Wait)", "Holding_Shear"
+active_statuses = ["Shearing (Wait)"] # "Shearing (Wait)", "Holding_Shear"
 shearing_df = df[df['status'].isin(active_statuses)].copy()
 
 # 2. Extract Raw Components
@@ -55,7 +55,7 @@ mae_text_y = ax[1, 1].text(0.05, 0.95, "", transform=ax[1, 1].transAxes, vertica
 
 # 4. Rotation Slider
 ax_theta = plt.axes([0.25, 0.05, 0.5, 0.03])
-theta_slider = Slider(ax_theta, 'Rotation Angle (deg)', -90.0, 90.0, valinit=0.0)
+theta_slider = Slider(ax_theta, 'Rotation Angle (deg)', -120.0, 120.0, valinit=0.0)
 
 def update(val):
     angle_rad = np.radians(theta_slider.val)

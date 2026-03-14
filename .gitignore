@@ -16,3 +16,7 @@ centernet/centernet_training_dataset/*
 *.jsonl
 *.avi
 pynhhd-v1.1/
+*.png
+*.jsonl
+*.txt
+*.json
