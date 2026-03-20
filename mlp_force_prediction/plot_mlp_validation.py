@@ -30,17 +30,17 @@ class PointNetRegressor(nn.Module):
         super().__init__()
 
         self.point_encoder = nn.Sequential(
-            nn.Linear(input_dim,64),
+            nn.Linear(input_dim,16),
             nn.LeakyReLU(),
-            nn.Linear(64,128),
+            nn.Linear(16,32),
             nn.LeakyReLU(),
-            nn.Linear(128,128)
+            nn.Linear(32,32)
         )
 
         self.regressor = nn.Sequential(
-            nn.Linear(128,64),
+            nn.Linear(32,16),
             nn.LeakyReLU(),
-            nn.Linear(64,3)
+            nn.Linear(16,3)
         )
 
     def forward(self,x):

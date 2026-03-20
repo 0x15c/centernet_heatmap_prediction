@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
         "--displacement-jsonl",
         type=Path,
         required=True,
-        help="Path to frontend displacement log JSONL (contains c1r and dr).",
+        help="Path to frontend displacement log JSONL (contains c0r and dr).",
     )
     parser.add_argument(
         "--output",
@@ -114,15 +114,15 @@ def status_matches(status: Any, target: str, mode: str) -> bool:
 
 
 def encode_vectors(
-    c1r: np.ndarray,
+    c0r: np.ndarray,
     dr: np.ndarray,
     max_points: int,
     slot_rng: random.Random | None = None,
 ) -> np.ndarray:
-    if c1r.ndim != 2 or dr.ndim != 2 or c1r.shape[1] != 2 or dr.shape[1] != 2:
-        raise ValueError(f"Expected c1r and dr to be shaped (n,2), got {c1r.shape} and {dr.shape}")
+    if c0r.ndim != 2 or dr.ndim != 2 or c0r.shape[1] != 2 or dr.shape[1] != 2:
+        raise ValueError(f"Expected c0r and dr to be shaped (n,2), got {c0r.shape} and {dr.shape}")
 
-    num_points = min(len(c1r), len(dr), max_points)
+    num_points = min(len(c0r), len(dr), max_points)
     features = np.zeros((max_points, 4), dtype=np.float32)
     if num_points == 0:
         return features
@@ -132,7 +132,7 @@ def encode_vectors(
     else:
         slot_indices = sorted(slot_rng.sample(range(max_points), num_points))
 
-    features[slot_indices, 0:2] = c1r[:num_points]
+    features[slot_indices, 0:2] = c0r[:num_points]
     features[slot_indices, 2:4] = dr[:num_points]
     # features[slot_indices, 4] = 1.0
     return features
@@ -193,24 +193,25 @@ def main() -> None:
         if disp_rec is None:
             continue
 
-        c1r = np.asarray(disp_rec.get("c1r", []), dtype=np.float32)
+        c0r = np.asarray(disp_rec.get("c0r", []), dtype=np.float32)
         dr = np.asarray(disp_rec.get("dr", []), dtype=np.float32)
 
-        if c1r.ndim != 2 or dr.ndim != 2 or c1r.shape[1] != 2 or dr.shape[1] != 2:
+        if c0r.ndim != 2 or dr.ndim != 2 or c0r.shape[1] != 2 or dr.shape[1] != 2:
             continue
 
-        n_raw = min(len(c1r), len(dr))
+        n_raw = min(len(c0r), len(dr))
         if n_raw > args.max_points:
             clipped_total += 1
 
         x = encode_vectors(
-            c1r,
+            c0r,
             dr,
             args.max_points,
             slot_rng=slot_rng if args.randomize_slots else None,
         )
-        rot_matrix = Rotation.from_euler('xyz', pose[3:], degrees=True).as_matrix()
-        force_base = rot_matrix @ force
+        # rot_matrix = Rotation.from_euler('xyz', pose[3:], degrees=True).as_matrix()
+        # force_base = rot_matrix @ force
+        force_base = force
         y = np.asarray(force_base[:3], dtype=np.float32)
         samples.append((x, y, force_frame, disp_frame))
         matched_total += 1

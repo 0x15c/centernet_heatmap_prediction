@@ -6,7 +6,7 @@ from scipy.stats import linregress
 
 # 1. Load and Sync Data
 gt_df = pd.read_json("Session_20260311_223951.jsonl", lines=True)
-disp_df = pd.read_json("Session_20260311_223951_MLP.jsonl", lines=True)
+disp_df = pd.read_json("Session_20260311_223951_MLP_new.jsonl", lines=True)
 df = pd.merge(gt_df, disp_df, on='frame')
 
 # Multi-status selection

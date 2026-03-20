@@ -24,7 +24,7 @@ from centernet.centernet_model import CenterNetModel
 
 # path to video file, or 0 for webcam
 VIDEO_SOURCE = "video/eval2.mp4"
-WEIGHTS_PATH = "centernet/checkpoints/latest_model_new_sensor.pth"
+WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e35.pth"
 
 INPUT_SIZE = (640, 360)             # model input resolution
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
@@ -36,7 +36,7 @@ SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
 
 SAVE_OUTPUT = True
-OUTPUT_VIDEO_PATH = "video_with_marker.mp4"
+# OUTPUT_VIDEO_PATH = "video_with_marker.mp4"
 
 COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 

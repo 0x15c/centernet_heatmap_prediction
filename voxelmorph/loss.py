@@ -3,65 +3,93 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Union
 
-
-def ncc_2d(
-    tensor1: torch.Tensor,
-    tensor2: torch.Tensor,
-    window_size: int = 9,
-    eps: float = 1e-5,
-) -> torch.Tensor:
+class NCC2D:
     """
-    Simplified 2D Local Normalized Cross-Correlation for [1, 1, H, W] tensors.
+    Local normalized cross-correlation loss for 2D images only.
 
-    Returns a scalar tensor representing the mean NCC across the spatial dimensions.
+    Input tensors are assumed to be shaped:
+        [B, C, H, W]
+
+    This is the PyTorch translation of the TensorFlow version,
+    restricted to 2D only.
     """
-    if tensor1.shape != tensor2.shape:
-        raise ValueError(
-            f"Shapes must match. Got {tensor1.shape} and {tensor2.shape}")
 
-    # Ensure window_size is a list for 2D
-    win = [window_size, window_size]
+    def __init__(self, win=None, eps=1e-5, signed=False):
+        self.win = win
+        self.eps = eps
+        self.signed = signed
 
-    # Create a sum filter (1, 1, win, win)
-    # This acts as a box-blur to calculate local sums
-    sum_filt = torch.ones(
-        1, 1, *win, device=tensor1.device, dtype=tensor1.dtype)
+    def ncc(self, Ii, Ji):
+        # Ii, Ji: [B, C, H, W]
+        assert Ii.ndim == 4 and Ji.ndim == 4, "Inputs must be 4D tensors [B, C, H, W]"
+        assert Ii.shape == Ji.shape, "Ii and Ji must have the same shape"
 
-    padding = window_size // 2
-    win_size = window_size * window_size
+        B, C, H, W = Ii.shape
 
-    # Compute element-wise products
-    I2 = tensor1 * tensor1
-    J2 = tensor2 * tensor2
-    IJ = tensor1 * tensor2
+        # set window size
+        if self.win is None:
+            win = [9, 9]
+        elif isinstance(self.win, int):
+            win = [self.win, self.win]
+        else:
+            assert len(self.win) == 2, "For 2D case, win must be int or length-2 list/tuple"
+            win = list(self.win)
 
-    # Local sums using 2D convolution
-    # Input: [1, 1, H, W], Filter: [1, 1, K, K] -> Output: [1, 1, H, W]
-    I_sum = F.conv2d(tensor1, sum_filt, padding=padding)
-    J_sum = F.conv2d(tensor2, sum_filt, padding=padding)
-    I2_sum = F.conv2d(I2, sum_filt, padding=padding)
-    J2_sum = F.conv2d(J2, sum_filt, padding=padding)
-    IJ_sum = F.conv2d(IJ, sum_filt, padding=padding)
+        kh, kw = win
 
-    # Local means
-    u_I = I_sum / win_size
-    u_J = J_sum / win_size
+        # compute CC terms
+        I2 = Ii * Ii
+        J2 = Ji * Ji
+        IJ = Ii * Ji
 
-    # Local Cross-covariance: cov(I, J) * win_size
-    # Mathematically: sum((I - uI)(J - uJ)) = sum(IJ) - uI*sum(J) - uJ*sum(I) + uI*uJ*win_size
-    cross = IJ_sum - u_I * J_sum - u_J * I_sum + u_I * u_J * win_size
+        # depthwise convolution filter: one all-ones kernel per channel
+        # shape for grouped conv2d: [C, 1, kh, kw]
+        sum_filt = torch.ones((C, 1, kh, kw), dtype=Ii.dtype, device=Ii.device)
 
-    # Local Variances: var(I) * win_size
-    I_var = I2_sum - 2 * u_I * I_sum + u_I * u_I * win_size
-    J_var = J2_sum - 2 * u_J * J_sum + u_J * u_J * win_size
+        # SAME padding for odd kernel sizes
+        pad_h = kh // 2
+        pad_w = kw // 2
 
-    # Local Squared correlation coefficient
-    # We add eps to the denominator to prevent division by zero in uniform areas
-    cc = (cross * cross) / (I_var * J_var + eps)
+        # local sums via grouped conv
+        I_sum = F.conv2d(Ii, sum_filt, stride=1, padding=(pad_h, pad_w), groups=C)
+        J_sum = F.conv2d(Ji, sum_filt, stride=1, padding=(pad_h, pad_w), groups=C)
+        I2_sum = F.conv2d(I2, sum_filt, stride=1, padding=(pad_h, pad_w), groups=C)
+        J2_sum = F.conv2d(J2, sum_filt, stride=1, padding=(pad_h, pad_w), groups=C)
+        IJ_sum = F.conv2d(IJ, sum_filt, stride=1, padding=(pad_h, pad_w), groups=C)
 
-    # Return the mean across the spatial dimensions (H, W)
-    # cc is [1, 1, H, W], so mean(dim=(2,3)) returns [1, 1]
-    return cc.mean()
+        # compute local means
+        win_size = kh * kw * C
+        u_I = I_sum / win_size
+        u_J = J_sum / win_size
+
+        # cross / variances
+        cross = IJ_sum - u_J * I_sum - u_I * J_sum + u_I * u_J * win_size
+        cross = torch.clamp(cross, min=self.eps)
+
+        I_var = I2_sum - 2 * u_I * I_sum + u_I * u_I * win_size
+        I_var = torch.clamp(I_var, min=self.eps)
+
+        J_var = J2_sum - 2 * u_J * J_sum + u_J * u_J * win_size
+        J_var = torch.clamp(J_var, min=self.eps)
+
+        if self.signed:
+            cc = cross / torch.sqrt(I_var * J_var + self.eps)
+        else:
+            cc = (cross / I_var) * (cross / J_var)
+
+        return cc
+
+    def loss(self, y_true, y_pred, reduce='mean'):
+        cc = self.ncc(y_true, y_pred)
+
+        if reduce == 'mean':
+            cc = cc.flatten(start_dim=1).mean(dim=1)
+        elif reduce == 'max':
+            cc = cc.flatten(start_dim=1).max(dim=1).values
+        elif reduce is not None:
+            raise ValueError(f"Unknown NCC reduction type: {reduce}")
+
+        return -cc
 
 
 def similarity_loss(fixed, warped, loss_type=["MSE", "NCC"]):
@@ -69,7 +97,8 @@ def similarity_loss(fixed, warped, loss_type=["MSE", "NCC"]):
         case "MSE":  # mean squared error
             return torch.mean((fixed - warped) ** 2)
         case "NCC":  # normalised cross correlation
-            return ncc_2d(fixed, warped)
+            NCC_Loss = NCC2D(win=9, signed=False)
+            return NCC_Loss(fixed, warped)
 
 
 def smoothness_loss(flow):  # flow: [N, 2, H, W]

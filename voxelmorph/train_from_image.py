@@ -23,14 +23,14 @@ RESIZE_TO = None  # (width, height) or None to keep original size
 checkpoint_path = "./ckpt"
 
 batch_size = 32
-epochs = 15
+epochs = 20
 learning_rate = 1e-3
 smoothness_weight = 0.1
 seed = 13
 drop_last = True
 
 WANDB_PROJECT = "voxelmorph"
-WANDB_RUN_NAME = "train_from_image_MSE_LOSS_RANDOM_FLIP"
+WANDB_RUN_NAME = "voxelmorph_With_new_centernet_NCC_loss"
 HFLIP_PROB = 0.65
 ROTATE_CHOICES = (0, 1, 3)  # 0, +90, -90 (k=3)
 

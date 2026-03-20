@@ -10,7 +10,8 @@ import time
 from typing import Tuple
 import json
 
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, KMeans
+
 import cv2
 import numpy as np
 import torch
@@ -19,11 +20,6 @@ from torchvision.transforms.functional import gaussian_blur
 # import skimage
 
 from centernet.centernet_model import CenterNetModel
-# from cpd_net.cpd_model import PointRegressor
-# from cpd_net.pred import displacement_predictor
-from voxelmorph.model import VoxelMorph2D
-
-from helmholtz import helmholtz_hodge_2d_fft
 import matplotlib.pyplot as plt 
 
 # ============================================================
@@ -32,13 +28,13 @@ import matplotlib.pyplot as plt
 
 # path to video file, or 0 for webcam
 # "force_regression_test/Raw_Session_20260205_234104.avi"  # "video/eval3.mp4"
-VIDEO_SOURCE = "force_regression_test/Raw_Session_20260311_231504.avi"
+VIDEO_SOURCE = "force_regression_test/Raw_Session_20260311_223951.avi"
 WEIGHTS_PATH = "centernet/checkpoints/centernet_resnet9_e35.pth"  # centernet
 WEIGHTS_PATH_VOXELMORPH = "voxelmorph/ckpt/voxelmorph2d_images_20_new_sensor.pt"
 # CPD_WEIGHTS_PATH = 'cpd_net/rect_noise_step_15000.pt'
 
 INPUT_SIZE = (600, 460)      # model input resolution, (W, H)
-CONCAT_SIZE = (INPUT_SIZE[0]*3, INPUT_SIZE[1]*2)
+CONCAT_SIZE = (INPUT_SIZE[0]*2, INPUT_SIZE[1]*2)
 HEATMAP_THRESHOLD = 0.2      # set to 0.0 to disable thresholding
 
 OVERLAY_ALPHA = 0.5          # original frame weight
@@ -48,13 +44,12 @@ SHOW_FPS = True
 MAX_DISPLAY_FPS = 0.0        # 0 = uncapped
 
 SAVE_OUTPUT = True
-OUTPUT_VIDEO_PATH = "test.mp4"
-DISPLACEMENT_OUTPUT_JSON_PATH = "mlp_force_prediction/test.jsonl"
+OUTPUT_VIDEO_PATH = "Session_20260311_223951_simple_search.mp4"
+DISPLACEMENT_OUTPUT_JSON_PATH = "mlp_force_prediction/Session_20260311_223951_MLP_simple_search.jsonl"
 
 COLORMAP = cv2.COLORMAP_JET  # OpenCV colormap
 
-MAX_DISP_VIZ_MAG = 5.0
-DISP_AMP_COEFF = 4
+DISP_AMP_COEFF = 1
 
 
 
@@ -74,16 +69,6 @@ def get_centernet_model(weights_path: str, device: torch.device) -> CenterNetMod
     model.to(device)
     model.eval()
     return model
-
-
-def get_voxelmorph_model(weights_path: str, device: torch.device) -> VoxelMorph2D:
-    state = torch.load(weights_path, map_location=device)
-    model = VoxelMorph2D()
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-    return model
-
 
 def preprocess_frame(
     frame_bgr: np.ndarray,
@@ -117,19 +102,6 @@ def centernet_infer(
         heat = prob[0]
 
     return heat
-
-
-@torch.no_grad()
-def voxelmorph_infer(
-    model: VoxelMorph2D,
-    moving: torch.tensor,
-    fixed: torch.tensor,
-    # device: torch.device,
-) -> torch.tensor:
-    _, flow = model(moving, fixed)
-    # wraped_np = wraped.squeeze().cpu().numpy()
-    # cv2.imshow("wraped", np.uint8(wraped_np*255))
-    return flow
 
 
 def render_heatmap(
@@ -195,9 +167,9 @@ def centroids_calc(cluster_array):
 
 
 def get_pointset(heatmap_uint8: np.ndarray):
-    thres = 50
+    thres = 30
     eps = 3
-    min_samples = 2
+    min_samples = 5
     _, activate = cv2.threshold(heatmap_uint8, thres, 255, cv2.THRESH_BINARY)
     # find those activated points above certain threshlod
     pts = cv2.findNonZero(activate)
@@ -210,6 +182,20 @@ def get_pointset(heatmap_uint8: np.ndarray):
         clusters = dbscan_extractor(cluster_data, cluster_coordinates)
         centroids, _ = centroids_calc(clusters)
     return centroids
+
+def get_pointset_kmeans(n_clusters, heatmap_uint8: np.ndarray):
+    thres = 30
+    eps = 3
+    min_samples = 5
+    _, activate = cv2.threshold(heatmap_uint8, thres, 255, cv2.THRESH_BINARY)
+    # find those activated points above certain threshlod
+    pts = cv2.findNonZero(activate)
+    if pts is None:
+        centroids = np.zeros((0, 2))
+    else:
+        cluster_coordinates = pts.reshape(-1, 2)
+        kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto").fit(cluster_coordinates)
+    return kmeans.cluster_centers_
 
 
 def draw_displacement_vectors(
@@ -294,6 +280,143 @@ def sample_regular_grid(height: int, width: int, step: int) -> np.ndarray:
     base_points = np.stack([grid_x.ravel(), grid_y.ravel()], axis=1)
     return base_points, grid_x, grid_y
 
+def match_displacements_silly(c0, c, max_dist=100.0, return_indices=False, return_distances=False):
+    """
+    Exhaustive independent nearest-neighbor matching from c0 to c.
+
+    For each point c0[j], search all points in c independently.
+    Previously matched points in c are STILL allowed to be reused.
+
+    Parameters
+    ----------
+    c0 : (N, D) array
+        Source points.
+    c : (M, D) array
+        Target points.
+    max_dist : float or None
+        If not None, reject matches with distance > max_dist.
+        Rejected points get zero displacement and index -1.
+    return_indices : bool
+        If True, also return matched indices into c.
+    return_distances : bool
+        If True, also return nearest distances.
+
+    Returns
+    -------
+    disp : (N, D) ndarray
+        Displacement vectors.
+    matched_idx : (N,) ndarray, optional
+        Matched index in c for each c0 point, or -1 if unmatched.
+    dists : (N,) ndarray, optional
+        Nearest distance for each c0 point (np.inf if unmatched).
+    """
+    c0 = np.asarray(c0, dtype=float)
+    c = np.asarray(c, dtype=float)
+
+    if c0.ndim != 2 or c.ndim != 2:
+        raise ValueError("c0 and c must both be 2D arrays")
+    if c0.shape[1] != c.shape[1]:
+        raise ValueError("c0 and c must have the same point dimension")
+
+    N, D = c0.shape
+    M = c.shape[0]
+
+    disp = np.zeros((N, D), dtype=float)
+    matched_idx = -np.ones(N, dtype=int)
+    dists = np.full(N, np.inf, dtype=float)
+
+    if N == 0 or M == 0:
+        outputs = [disp]
+        if return_indices:
+            outputs.append(matched_idx)
+        if return_distances:
+            outputs.append(dists)
+        return tuple(outputs) if len(outputs) > 1 else disp
+
+    for j in range(N):
+        best_i = -1
+        best_d2 = np.inf
+
+        for i in range(M):
+            diff = c[i] - c0[j]
+            d2 = np.dot(diff, diff)
+            if d2 < best_d2:
+                best_d2 = d2
+                best_i = i
+
+        if best_i >= 0:
+            best_d = np.sqrt(best_d2)
+            if (max_dist is None) or (best_d <= max_dist):
+                matched_idx[j] = best_i
+                dists[j] = best_d
+                disp[j] = c[best_i] - c0[j]
+
+    outputs = [disp]
+    if return_indices:
+        outputs.append(matched_idx)
+    if return_distances:
+        outputs.append(dists)
+
+    return tuple(outputs) if len(outputs) > 1 else disp
+
+def clamp_displacements_to_previous(disp_new, disp_prev, max_change):
+    """
+    Replace extreme displacement updates by previous values.
+
+    Parameters
+    ----------
+    disp_new : (N, D) array
+        Newly computed displacement vectors.
+    disp_prev : (N, D) array or None
+        Previous displacement vectors.
+        If None, disp_new is returned unchanged.
+    max_change : float
+        Maximum allowed change in displacement magnitude between frames.
+
+    Returns
+    -------
+    disp_out : (N, D) ndarray
+        Filtered displacement vectors.
+    outlier_mask : (N,) ndarray of bool
+        True where the new vector was replaced by the previous one.
+    """
+    disp_new = np.asarray(disp_new, dtype=float)
+
+    if disp_prev is None:
+        return disp_new.copy(), np.zeros(disp_new.shape[0], dtype=bool)
+
+    disp_prev = np.asarray(disp_prev, dtype=float)
+
+    if disp_new.shape != disp_prev.shape:
+        raise ValueError("disp_new and disp_prev must have the same shape")
+
+    diff = disp_new - disp_prev
+    diff_norm = np.linalg.norm(diff, axis=1)
+
+    outlier_mask = diff_norm > max_change
+
+    disp_out = disp_new.copy()
+    disp_out[outlier_mask] = disp_prev[outlier_mask]
+
+    return disp_out, outlier_mask
+
+def match_and_simple_filter(c0, c, disp_prev=None, max_dist=None, max_change=5.0,
+                            return_indices=False, return_mask=False):
+    """
+    1. Exhaustive independent nearest-neighbor matching
+    2. If a displacement changes too much from previous value, keep previous value
+    """
+    disp_new, idx = match_displacements_silly(c0, c, max_dist=max_dist, return_indices=True)
+    disp_out, mask = clamp_displacements_to_previous(disp_new, disp_prev, max_change=max_change)
+
+    outputs = [disp_out]
+    if return_indices:
+        outputs.append(idx)
+    if return_mask:
+        outputs.append(mask)
+
+    return tuple(outputs) if len(outputs) > 1 else disp_out
+
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -303,7 +426,6 @@ def main():
     # cpd_net_predictor = displacement_predictor(CPD_WEIGHTS_PATH, device)
     # load centernet weights
     centernet_model = get_centernet_model(WEIGHTS_PATH, device)
-    voxelmorph_model = get_voxelmorph_model(WEIGHTS_PATH_VOXELMORPH, device)
 
     cap = cv2.VideoCapture(0 if VIDEO_SOURCE == 0 else VIDEO_SOURCE)
     if not cap.isOpened():
@@ -368,51 +490,15 @@ def main():
         heat_gray = np.uint8(heat_raw*255.0)
 
         # get cluster centroids
-        c = get_pointset(heat_gray)
+        if frame_count <= 0:
+            c = get_pointset(heat_gray)
+            n_clusters = c.shape[0]
+        c = get_pointset_kmeans(n_clusters, heat_gray)
         if frame_count <= 0:
             c0 = c # c0 is the markers point set sampled at the first frame
             d = None 
             frame0_tensor = probmap_inferred
-        flow_gpu_tensor = voxelmorph_infer(
-            voxelmorph_model, probmap_inferred[None, None], frame0_tensor[None, None]).squeeze()
-        flow_cpu_tensor.copy_(flow_gpu_tensor, non_blocking=True)
-        flow = flow_cpu_tensor.numpy()
-        # Phi, Psi is the potential
-        flow_grad, flow_rot, flow_harmonic, Phi, Psi = helmholtz_hodge_2d_fft(flow,return_potentials=True)
-        Phi_max_diff = np.max(Phi)-np.min(Phi)
-        # flow_grad_normlized_resized = cv2.normalize(flow_grad,None)
-        # q.set_UVC(flow_harmonic[0],flow_harmonic[1])
-        # plt.draw()
-        # plt.pause(0.1)
-        flow_vector_avg = np.mean(flow,axis=(1,2))
-        flow_blurred = blur_flow_field(flow, ksize=3)
-        # visualize flow magnitude
-        flow_mag = cv2.resize(np.linalg.norm(
-            flow_blurred, axis=0), (width, height), interpolation=cv2.INTER_CUBIC)
-
-        flow_norm = flow_mag/np.max((MAX_DISP_VIZ_MAG, np.max(flow_mag)))
-        Phi_norm = Phi/np.max((MAX_DISP_VIZ_MAG,np.max(Phi)))
-        Psi_norm = Psi/np.max((MAX_DISP_VIZ_MAG,np.max(Psi)))
-        displacement_heatmap = cv2.applyColorMap(np.uint8(flow_norm*255), cv2.COLORMAP_PLASMA)
-        Phi_hm = cv2.applyColorMap(np.uint8(Phi_norm*255), cv2.COLORMAP_JET)
-        Psi_hm = cv2.applyColorMap(np.uint8(Psi_norm*255), cv2.COLORMAP_PLASMA)
-        # cv2.imshow("displacemet magnitude",displacement_heatmap)
-        # after we obtain the flow, let's do some upsampling to match the dimension:
-        h, w = flow_blurred.shape[1], flow_blurred.shape[2]
-        scale_x = INPUT_SIZE[0] / w
-        scale_y = INPUT_SIZE[1] / h
-
-        u = cv2.resize(flow_blurred[0], (width, height),
-                       interpolation=cv2.INTER_LINEAR) * scale_x
-        v = cv2.resize(flow_blurred[1], (width, height),
-                       interpolation=cv2.INTER_LINEAR) * scale_y
-        flow_upsampled = np.stack([u, v], axis=0)
-        d = sample_flow_at_points(flow_upsampled, c0, radius=2)
-        # flow_vector is the collapsed summary of flow, it averages the u and v channel, producing a 2x1 column vector.
-        # this is useful for single-point force regression.
-        flow_vector_c0 = np.mean(d, axis=0) # sampled at c0
-        flow_vector_c1 = np.mean(sample_flow_at_points(flow_upsampled,c,radius=2), axis=0) # sampled at current marker position
-        flow_vector_harmonics = np.mean(flow_harmonic, axis=(1,2))
+        d = match_and_simple_filter(c0, c, d, max_change=35.0)
         heat_color = render_heatmap(probmap_inferred_cpu, (height, width))
         overlay = cv2.addWeighted(
             frame_downsampled, OVERLAY_ALPHA, heat_color, OVERLAY_BETA, 0)
@@ -426,48 +512,44 @@ def main():
             prev_time = now
             cv2.putText(overlay, f"FPS: {fps:.0f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
-        
-        displacement_heatmap = draw_displacement_vectors(
-            displacement_heatmap, c0, d*DISP_AMP_COEFF)
-        cv2.putText(displacement_heatmap, f"mean disp. x:{flow_vector_avg[0]:.2f}, y:{flow_vector_avg[1]:.2f}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+        displacement = draw_displacement_vectors(
+            frame, c0, d*DISP_AMP_COEFF)
         frame_row_0 = np.concatenate((overlay, heat_color), axis=0)
         frame_row_1 = np.concatenate(
-            (displacement_heatmap, cv2.resize(frame, INPUT_SIZE)), axis=0)
-        frame_col_1 = np.concatenate((cv2.resize(Phi_hm, INPUT_SIZE),cv2.resize(Psi_hm, INPUT_SIZE)),axis=0)
-        frame_sub_concatenated = np.concatenate((frame_row_0, frame_row_1), axis=1)
-        frame_concatenated = np.concatenate((frame_sub_concatenated, frame_col_1), axis=1)
-        cv2.imshow("concatenated_frame", frame_concatenated)
+            (displacement, cv2.resize(frame, INPUT_SIZE)), axis=0)
+        frame = np.concatenate((frame_row_0, frame_row_1), axis=1)
+        cv2.imshow("concatenated_frame", frame)
         # write to video
         if writer is not None:
-            writer.write(frame_concatenated)
+            writer.write(frame)
         # regularize the c0 and c1 and the displacement vectors
         c0r = np.stack((c0[:,0]/width,c0[:,1]/height),axis=1)
         c1r = np.stack((c[:,0]/width,c[:,1]/height),axis=1)
         dr = np.stack((d[:,0]/width,d[:,1]/width),axis=1) # notice here we divide all components by width to preserve the ratio information
         pass
+        
 
 
         # write to json
         data_record = {
             "frame": frame_count,
-            "disp_x_sample_based_c0": flow_vector_c0[0].astype(float),
-            "disp_y_sample_based_c0": flow_vector_c0[1].astype(float),
-            "disp_x_sample_based_c1": flow_vector_c1[0].astype(float),
-            "disp_y_sample_based_c1": flow_vector_c1[1].astype(float),
-            "disp_x_harmonics": flow_vector_harmonics[0].astype(float),
-            "disp_y_harmonics": flow_vector_harmonics[1].astype(float),
-            "disp_x_avg": flow_vector_avg[0].astype(float),
-            "disp_y_avg": flow_vector_avg[1].astype(float),
-            "Phi_max_diff": Phi_max_diff.astype(float),
+            # "disp_x_sample_based_c0": flow_vector_c0[0].astype(float),
+            # "disp_y_sample_based_c0": flow_vector_c0[1].astype(float),
+            # "disp_x_sample_based_c1": flow_vector_c1[0].astype(float),
+            # "disp_y_sample_based_c1": flow_vector_c1[1].astype(float),
+            # "disp_x_harmonics": flow_vector_harmonics[0].astype(float),
+            # "disp_y_harmonics": flow_vector_harmonics[1].astype(float),
+            # "disp_x_avg": flow_vector_avg[0].astype(float),
+            # "disp_y_avg": flow_vector_avg[1].astype(float),
+            # "Phi_max_diff": Phi_max_diff.astype(float),
             "c1r": c1r.astype(float).tolist(),
             "c0r": c1r.astype(float).tolist(),
             "dr": dr.astype(float).tolist(),
 
         }
-        # with open(DISPLACEMENT_OUTPUT_JSON_PATH, 'a', encoding='utf-8') as f:
-        #     displacement_json = json.dumps(data_record)
-        #     f.write(displacement_json + '\n')
+        with open(DISPLACEMENT_OUTPUT_JSON_PATH, 'a', encoding='utf-8') as f:
+            displacement_json = json.dumps(data_record)
+            f.write(displacement_json + '\n')
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord("q")):
             break

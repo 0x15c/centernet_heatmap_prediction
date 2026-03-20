@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-z_axis_loss_coeff = 0.0
+z_axis_loss_coeff = 1.0
 hidden_dims = (128, 64, 16)
 class ForceMLP(nn.Module):
     def __init__(self, input_dim: int, hidden_dims: Tuple[int, int, int] = hidden_dims):
@@ -34,24 +34,24 @@ class PointNetRegressor(nn.Module):
         super().__init__()
 
         self.point_encoder = nn.Sequential(
-            nn.Linear(input_dim,64),
+            nn.Linear(input_dim,16),
             nn.LeakyReLU(),
-            nn.Linear(64,128),
+            nn.Linear(16,32),
             nn.LeakyReLU(),
-            nn.Linear(128,128)
+            nn.Linear(32,32)
         )
 
         self.regressor = nn.Sequential(
-            nn.Linear(128,64),
+            nn.Linear(32,16),
             nn.LeakyReLU(),
-            nn.Linear(64,3)
+            nn.Linear(16,3)
         )
 
     def forward(self,x):
-        # x shape: (batch, n_points, 4) (2048, 50, 4)
+        # x shape: (batch, n_points, 4)
         pass
         feat = self.point_encoder(x)        # (B,N,128)
-        global_feat = feat.max(dim=1)[0]    # max pooling
+        global_feat = feat.max(dim=1)[0]    # max pooling, kill the dimension of n_points
 
         out = self.regressor(global_feat)
         return out
@@ -100,8 +100,8 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
             xb = xb.to(device, non_blocking=True)
             yb = yb.to(device, non_blocking=True)
             pred = model(xb)
-            loss = criterion(pred, yb)
-            # loss = criterion(pred[:,0:2], yb[:,0:2])+z_axis_loss_coeff*criterion(pred[:,2],yb[:,2])
+            # loss = criterion(pred, yb)
+            loss = criterion(pred[:,0:2], yb[:,0:2])+z_axis_loss_coeff*criterion(pred[:,2],yb[:,2])
             bs = xb.shape[0]
             total_loss += loss.item() * bs
             total_count += bs
@@ -146,6 +146,7 @@ def main() -> None:
 
     model = PointNetRegressor(input_dim=train_x.shape[2]).to(device)
     criterion = nn.MSELoss()
+    # criterion = nn.L1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     history = {"train_loss": [], "val_loss": []}
@@ -161,8 +162,8 @@ def main() -> None:
             yb = yb.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             pred = model(xb)
-            loss = criterion(pred, yb)
-            # loss = criterion(pred[:,0:2], yb[:,0:2])+z_axis_loss_coeff*criterion(pred[:,2],yb[:,2])
+            # loss = criterion(pred, yb)
+            loss = criterion(pred[:,0:2], yb[:,0:2])+z_axis_loss_coeff*criterion(pred[:,2],yb[:,2])
             loss.backward()
             optimizer.step()
 
